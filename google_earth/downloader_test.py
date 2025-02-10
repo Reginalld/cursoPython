@@ -6,16 +6,18 @@ from rasterio.plot import show
 from matplotlib import pyplot as plt
 import requests
 
-#Identificação da conta de serviço do google que está conectada e tem as autoricações necessárias com o projeto do GEE
-service_account = 'teste-api-key@sunlit-flag-449511-f7.iam.gserviceaccount.com'
-#Variável de acesso ao google por meio de dois parâmetros, a indentificação da conta de serviço e a chave json gerada nessa conta de serviço
-credentials = ee.ServiceAccountCredentials(service_account,'D:\\codigos\\Python_curso\\google_earth\\api_key_test.json')
-ee.Initialize(credentials,project='ee-reginaldosg')
+def initialize_gee(service_account, key_path,project):
+    try:
+        credentials = ee.ServiceAccountCredentials(service_account,key_path)
+        ee.Initialize(credentials,project=project)
+        print('GEE inicializado com sucesso')
+    except Exception as e:
+        raise RuntimeError(f"Erro ao inicializar o GEE: {e}")
 
-# Diretório de saída
-output_dir = 'D:\\codigos\\imagens'
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+def create_output(output_dir):
+    # Função para criar o diretório de saída, caso não exista
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
 def mask_s2_clouds(image):
   """Masks clouds in a Sentinel-2 image using the QA band.
@@ -104,6 +106,16 @@ lat = float(input("Digite a latitude: "))
 lon = float(input("Digite a longitude: "))
 radius_km = float(input("Digite o raio em km: "))
 
+
+#Identificação da conta de serviço do google que está conectada e tem as autoricações necessárias com o projeto do GEE
+#Variável de acesso ao google por meio de dois parâmetros, a indentificação da conta de serviço e a chave json gerada nessa conta de serviço
+service_account = 'teste-api-key@sunlit-flag-449511-f7.iam.gserviceaccount.com'
+key_path = 'D:\\codigos\\Python_curso\\google_earth\\api_key_test.json'
+project = 'ee-reginaldosg'
+output_dir = 'D:\\codigos\\imagens'
+
+initialize_gee(service_account,key_path,project)
+create_output(output_dir)
+
 image, region = get_sentinel2_image()
 image_path = download_image(image,region,'imagem_teste_PTI.tif')
-
