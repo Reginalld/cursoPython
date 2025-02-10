@@ -14,6 +14,8 @@ ee.Initialize(credentials,project='ee-reginaldosg')
 
 # Diretório de saída
 output_dir = 'D:\\codigos\\imagens'
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
 
 def mask_s2_clouds(image):
   """Masks clouds in a Sentinel-2 image using the QA band.
@@ -39,7 +41,7 @@ def mask_s2_clouds(image):
 
   return image.updateMask(mask).divide(10000)
 
-def get_sentinel2_image(lat, lon, radius_km=5, start_date='2024-01-01', end_date='2024-02-01'):
+def get_sentinel2_image(lat=-25.5050, lon=-54.5937, radius_km=5, start_date='2024-01-01', end_date='2024-02-01'):
     
     # Obtém imagens do Sentinel-2A para uma área específica com um raio definido
     point = ee.Geometry.Point([lon,lat])
@@ -85,7 +87,7 @@ def download_image(image, region, file):
     })
 
     filepath = os.path.join(output_dir, file)
-    geemap.download_file(url, filepath)
+    geemap.download_file(url, filepath,overwrite=True)
     print(f'Imagem salve em: {filepath}')
     return filepath
 
@@ -98,9 +100,10 @@ def plot_image(filepath):
         plt.title('Sentinel-2A Imagem RGB')
         plt.show()
 
-latitude = -23.5505
-longitude = -46.6333
+lat = float(input("Digite a latitude: "))
+lon = float(input("Digite a longitude: "))
+radius_km = float(input("Digite o raio em km: "))
 
-image, region = get_sentinel2_image(latitude,longitude)
-image_path = download_image(image,region,'imagem_teste_NDVI.tif')
+image, region = get_sentinel2_image()
+image_path = download_image(image,region,'imagem_teste_PTI.tif')
 
