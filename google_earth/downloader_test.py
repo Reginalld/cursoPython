@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 import requests
 
 def initialize_gee(service_account, key_path,project):
+    #Inicializado o GEE com a conta de serviço fornecida
     try:
         if not os.path.exists(key_path):
             raise FileNotFoundError(f"Arquivo de chave de serviço não encontrado: {key_path}")
@@ -40,28 +41,31 @@ def mask_s2_clouds(image):
   )
   return image.updateMask(mask).divide(10000)
 
-def get_sentinel2_image(lat, lon, radius_km=5, start_date='2024-01-01', end_date='2024-02-01'):
-    
+def get_sentinel2_image(lat, lon, radius_km=5, start_date='2025-01-01', end_date='2025-02-01'):
     # Obtém imagens do Sentinel-2A para uma área específica com um raio definido
-    point = ee.Geometry.Point([lon,lat])
-    region = point.buffer(radius_km * 1000)
+    try:
+        point = ee.Geometry.Point([lon,lat])
+        region = point.buffer(radius_km * 1000)
 
-    collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\
-        .filterBounds(region) \
-        .filterDate(ee.Date(start_date),ee.Date(end_date))\
-        .sort('CLOUDY_PIXEL_PERCENTAGE') \
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20)) \
-        .map(mask_s2_clouds)
-    
-    count = collection.size().getInfo()
-    print(f"{count} imagens encontradas para a região.")
+        collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\
+                    .filterBounds(region) \
+                    .filterDate(ee.Date(start_date),ee.Date(end_date))\
+                    .sort('CLOUDY_PIXEL_PERCENTAGE') \
+                    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20)) \
+                    .map(mask_s2_clouds)
+        
+        count = collection.size().getInfo()
+        print(f"{count} imagens encontradas para a região.")
 
-    if count == 0:
-        raise ValueError("Nenhuma imagem encontrada para os parâmetros fornecidos.")
-    
-    image = collection.first()
-    image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde, Azul e NIR para cálculo de NDVI
-    return image, region
+        if count == 0:
+            raise ValueError("Nenhuma imagem encontrada para os parâmetros fornecidos.")
+        
+        image = collection.first()
+        image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde, Azul e NIR para cálculo de NDVI
+        return image, region
+    except Exception as e:
+        print(f'Erro ao obter imagem Sentinel-2: {e}')
+        return None,None
 
 def download_image(image, region, output_dir,filename):
     try:
@@ -97,12 +101,18 @@ def download_image(image, region, output_dir,filename):
 
 def plot_image(filepath):
     
+    try:
+        with rasterio.open(filepath) as src:
+            img = src.read([3, 2, 1]).astype(float)
+            img = img / img.max()  # Normalização para melhorar o contraste
 
-    with rasterio.open(filepath) as src:
-        fig, ax= plt.subplots(figsize=(10,10))
-        show(src.read([3,2,1]), ax=ax) 
-        plt.title('Sentinel-2A Imagem RGB')
-        plt.show()
+            fig, ax = plt.subplots(figsize=(10, 10))
+            show(img, ax=ax)
+            plt.title('Sentinel-2 RGB (B4, B3, B2)')
+            plt.axis('off')
+            plt.show()
+    except Exception as e:
+        print(f'Erro ao exibir a imagem: {e}')
 
 def main():
     #Função main responsável pelo núcleo central da aplicação
