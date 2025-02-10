@@ -41,30 +41,50 @@ def mask_s2_clouds(image):
   )
   return image.updateMask(mask).divide(10000)
 
-def get_sentinel2_image(lat, lon, radius_km=5, start_date='2025-01-01', end_date='2025-02-01'):
+def mask_s1_edges(image):
+    edge = image.lt(-30.0)
+    masked_image = image.mask().And(edge.Not())
+    return image.updateMask(masked_image)
+
+def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', end_date='2025-02-01'):
     # Obtém imagens do Sentinel-2A para uma área específica com um raio definido
     try:
         point = ee.Geometry.Point([lon,lat])
         region = point.buffer(radius_km * 1000)
 
-        collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\
+        if satelite == 'Sentinel-2_SR':
+            collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\
                     .filterBounds(region) \
                     .filterDate(ee.Date(start_date),ee.Date(end_date))\
                     .sort('CLOUDY_PIXEL_PERCENTAGE') \
                     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20)) \
                     .map(mask_s2_clouds)
+            
+            image = collection.first()
+            image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde, Azul e NIR para cálculo de NDVI
+
+        elif satelite == 'Sentinel-1':
+            collection = ee.ImageCollection('COPERNICUS/S1_GRD')\
+                .filterBounds(region)\
+                .filterDate(ee.Date(start_date), ee.Date(end_date))\
+                .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))\
+                .filter(ee.Filter.eq('instrumentMode', 'IW'))\
+                .map(mask_s1_edges)
+            
+            image = collection.median().select('VV')    
+        else:
+            raise ValueError('Satélite não suportado. Escolha entre os satélites informados')
         
         count = collection.size().getInfo()
-        print(f"{count} imagens encontradas para a região.")
+        print(f"{count} imagens encontradas para a região.") 
 
         if count == 0:
             raise ValueError("Nenhuma imagem encontrada para os parâmetros fornecidos.")
         
-        image = collection.first()
-        image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde, Azul e NIR para cálculo de NDVI
         return image, region
+    
     except Exception as e:
-        print(f'Erro ao obter imagem Sentinel-2: {e}')
+        print(f'Erro ao obter imagem {satelite}: {e}')
         return None,None
 
 def download_image(image, region, output_dir,filename):
@@ -99,18 +119,21 @@ def download_image(image, region, output_dir,filename):
     # return filepath
     
 
-def plot_image(filepath):
+def plot_image(filepath,satelite):
     
     try:
-        with rasterio.open(filepath) as src:
-            img = src.read([3, 2, 1]).astype(float)
-            img = img / img.max()  # Normalização para melhorar o contraste
-
-            fig, ax = plt.subplots(figsize=(10, 10))
-            show(img, ax=ax)
-            plt.title('Sentinel-2 RGB (B4, B3, B2)')
-            plt.axis('off')
-            plt.show()
+        if satelite == "Sentinel-1":
+            with rasterio.open(filepath) as src:
+                fig, ax = plt.subplots(figsize=(10, 10))
+                show(src.read(1), ax=ax, cmap='gray')  # Sentinel-1 é SAR, então exibe em tons de cinza
+                plt.title('Imagem de Satélite')
+                plt.show()
+        elif satelite == 'Sentinel-2_SR':
+            with rasterio.open(filepath) as src:
+                fig, ax= plt.subplots(figsize=(10,10))
+                show(src.read([3,2,1]), ax=ax) 
+                plt.title('Sentinel-2A Imagem RGB')
+                plt.show()
     except Exception as e:
         print(f'Erro ao exibir a imagem: {e}')
 
@@ -128,6 +151,7 @@ def main():
 
     #Entrada do usuário
     try:
+        satelite = input('Escolha um satélite (Sentinel-1 ou Sentinel-2_SR): '.strip())
         lat = float(input('Digite a latitude: '))
         lon = float(input('Digite a longitude: '))
         radius_km = float(input('Digite o raio em km: '))
@@ -136,15 +160,15 @@ def main():
         return
     
     #Processamento da imagem
-    image, region = get_sentinel2_image(lat,lon,radius_km)
+    image, region = get_sentinel_image(satelite,lat,lon,radius_km)
     if image is None:
         print('Error: Nenhuma imagem encontrada para os parâmetros fornecidos.')
         return
     
     #Baixando a imagem e exibindo para alguma inspeção básica de funcionamento
-    filename = f'sentinel2_{lat}_{lon}_{radius_km}km.tif'
+    filename = f'{satelite}_{lat}_{lon}_{radius_km}km.tif'
     image_path = download_image(image,region,output_dir,filename)
     if image_path:
-        plot_image(image_path)
+        plot_image(image_path,satelite)
 
 main()
