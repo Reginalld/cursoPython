@@ -62,6 +62,17 @@ def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', 
             
             image = collection.first()
             image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde, Azul e NIR para cálculo de NDVI
+        
+        elif satelite == 'Sentinel-2':
+            collection = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')\
+                    .filterBounds(region)\
+                    .filterDate(ee.Date(start_date),ee.Date(end_date))\
+                    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20))\
+                    .map(mask_s2_clouds)
+            
+            image = collection.first()
+            image = image.select(['B4','B3','B2','B8'])
+
 
         elif satelite == 'Sentinel-1':
             collection = ee.ImageCollection('COPERNICUS/S1_GRD')\
@@ -99,26 +110,6 @@ def download_image(image, region, output_dir,filename):
     except Exception as e:
         raise RuntimeError('Erro ao fazer download da imagem',e)
 
-    #  url = image.getDownloadURL({
-    #     'scale': 30,
-    #     'region': region,
-    #     'format': 'GeoTIFF'
-    # })
-
-    # filepath = os.path.join(output_dir, file)
-    
-    # response = requests.get(url, stream=True)
-    # if response.status_code == 200:
-    #     with open(filepath, 'wb') as file:
-    #         for chunk in response.iter_content(1024):
-    #             file.write(chunk)
-    #     print(f"Imagem salva em: {filepath}")
-    # else:
-    #     print(f"Erro ao baixar imagem: {response.status_code}, {response.text}")
-    
-    # return filepath
-    
-
 def plot_image(filepath,satelite):
     
     try:
@@ -130,9 +121,12 @@ def plot_image(filepath,satelite):
                 plt.show()
         elif satelite == 'Sentinel-2_SR':
             with rasterio.open(filepath) as src:
-                fig, ax= plt.subplots(figsize=(10,10))
-                show(src.read([3,2,1]), ax=ax) 
-                plt.title('Sentinel-2A Imagem RGB')
+                img = src.read([3, 2, 1]).astype(float)
+                img = img / img.max()  # Normalização para melhorar o contraste
+                fig, ax = plt.subplots(figsize=(10, 10))
+                show(img, ax=ax)
+                plt.title('Sentinel-2 RGB (B4, B3, B2)')
+                plt.axis('off')
                 plt.show()
     except Exception as e:
         print(f'Erro ao exibir a imagem: {e}')
@@ -149,26 +143,31 @@ def main():
     initialize_gee(service_account,key_path,project)
     create_output(output_dir)
 
-    #Entrada do usuário
-    try:
-        satelite = input('Escolha um satélite (Sentinel-1 ou Sentinel-2_SR): '.strip())
-        lat = float(input('Digite a latitude: '))
-        lon = float(input('Digite a longitude: '))
-        radius_km = float(input('Digite o raio em km: '))
-    except ValueError:
-        print('Erro: Entrada inválida. Certifique-se de inserir números válidos')
-        return
-    
-    #Processamento da imagem
-    image, region = get_sentinel_image(satelite,lat,lon,radius_km)
-    if image is None:
-        print('Error: Nenhuma imagem encontrada para os parâmetros fornecidos.')
-        return
-    
-    #Baixando a imagem e exibindo para alguma inspeção básica de funcionamento
-    filename = f'{satelite}_{lat}_{lon}_{radius_km}km.tif'
-    image_path = download_image(image,region,output_dir,filename)
-    if image_path:
-        plot_image(image_path,satelite)
+    while True:
+        #Entrada do usuário
+        try:
+            satelite = input('Escolha um satélite (Sentinel-1 / Sentinel-2_SR / Sentinel-2): '.strip())
+            lat = float(input('Digite a latitude: '))
+            lon = float(input('Digite a longitude: '))
+            radius_km = float(input('Digite o raio em km: '))
+        except ValueError:
+            print('Erro: Entrada inválida. Certifique-se de inserir números válidos')
+            continue
+        
+        #Processamento da imagem
+        image, region = get_sentinel_image(satelite,lat,lon,radius_km)
+        if image is None:
+            print('Error: Nenhuma imagem encontrada para os parâmetros fornecidos.')
+            continue
+        
+        #Baixando a imagem e exibindo para alguma inspeção básica de funcionamento
+        filename = f'{satelite}_{lat}_{lon}_{radius_km}km.tif'
+        image_path = download_image(image,region,output_dir,filename)
+        if image_path:
+            plot_image(image_path,satelite)
+            
+        repeat = input("Deseja processar outra imagem? (s/n): ").strip().lower()
+        if repeat != 's':
+            break
 
 main()
