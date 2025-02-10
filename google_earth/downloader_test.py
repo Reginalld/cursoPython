@@ -8,6 +8,8 @@ import requests
 
 def initialize_gee(service_account, key_path,project):
     try:
+        if not os.path.exists(key_path):
+            raise FileNotFoundError(f"Arquivo de chave de serviço não encontrado: {key_path}")
         credentials = ee.ServiceAccountCredentials(service_account,key_path)
         ee.Initialize(credentials,project=project)
         print('GEE inicializado com sucesso')
@@ -21,29 +23,24 @@ def create_output(output_dir):
 
 def mask_s2_clouds(image):
   """Masks clouds in a Sentinel-2 image using the QA band.
-
   Args:
       image (ee.Image): A Sentinel-2 image.
-
   Returns:
       ee.Image: A cloud-masked Sentinel-2 image.
   """
   qa = image.select('QA60')
-
   # Bits 10 and 11 are clouds and cirrus, respectively.
   cloud_bit_mask = 1 << 10
   cirrus_bit_mask = 1 << 11
-
   # Both flags should be set to zero, indicating clear conditions.
   mask = (
       qa.bitwiseAnd(cloud_bit_mask)
       .eq(0)
       .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
   )
-
   return image.updateMask(mask).divide(10000)
 
-def get_sentinel2_image(lat=-25.5050, lon=-54.5937, radius_km=5, start_date='2024-01-01', end_date='2024-02-01'):
+def get_sentinel2_image(lat, lon, radius_km=5, start_date='2024-01-01', end_date='2024-02-01'):
     
     # Obtém imagens do Sentinel-2A para uma área específica com um raio definido
     point = ee.Geometry.Point([lon,lat])
@@ -56,12 +53,27 @@ def get_sentinel2_image(lat=-25.5050, lon=-54.5937, radius_km=5, start_date='202
         .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20)) \
         .map(mask_s2_clouds)
     
+    count = collection.size().getInfo()
+    print(f"{count} imagens encontradas para a região.")
+
+    if count == 0:
+        raise ValueError("Nenhuma imagem encontrada para os parâmetros fornecidos.")
+    
     image = collection.first()
     image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde, Azul e NIR para cálculo de NDVI
     return image, region
 
-def download_image(image, region, file):
-
+def download_image(image, region, output_dir,filename):
+    try:
+        if image is None:
+            raise ValueError("Imagem inválida. Verifique os parâmetros.")
+        url = image.getDownloadURL({'scale': 10, 'region': region, 'format': 'GeoTIFF'})
+        filepath = os.path.join(output_dir, filename)
+        geemap.download_file(url, filepath, overwrite=True)
+        print(f"Imagem salva em: {filepath}")
+        return filepath
+    except Exception as e:
+        raise RuntimeError('Erro ao fazer download da imagem',e)
 
     #  url = image.getDownloadURL({
     #     'scale': 30,
@@ -82,16 +94,6 @@ def download_image(image, region, file):
     
     # return filepath
     
-    url = image.getDownloadURL({
-        'scale': 10, 
-        'region': region,
-        'format': 'GeoTIFF'
-    })
-
-    filepath = os.path.join(output_dir, file)
-    geemap.download_file(url, filepath,overwrite=True)
-    print(f'Imagem salve em: {filepath}')
-    return filepath
 
 def plot_image(filepath):
     
@@ -102,20 +104,37 @@ def plot_image(filepath):
         plt.title('Sentinel-2A Imagem RGB')
         plt.show()
 
-lat = float(input("Digite a latitude: "))
-lon = float(input("Digite a longitude: "))
-radius_km = float(input("Digite o raio em km: "))
+def main():
+    #Função main responsável pelo núcleo central da aplicação
+  
+    #Identificação da conta de serviço do google que está conectada e tem as autoricações necessárias com o projeto do GEE
+    #Variável de acesso ao google por meio de dois parâmetros, a indentificação da conta de serviço e a chave json gerada nessa conta de serviço
+    service_account = 'teste-api-key@sunlit-flag-449511-f7.iam.gserviceaccount.com'
+    key_path = 'D:\\codigos\\Python_curso\\google_earth\\api_key_test.json'
+    project = 'ee-reginaldosg'
+    output_dir = 'D:\\codigos\\imagens'
+    initialize_gee(service_account,key_path,project)
+    create_output(output_dir)
 
+    #Entrada do usuário
+    try:
+        lat = float(input('Digite a latitude: '))
+        lon = float(input('Digite a longitude: '))
+        radius_km = float(input('Digite o raio em km: '))
+    except ValueError:
+        print('Erro: Entrada inválida. Certifique-se de inserir números válidos')
+        return
+    
+    #Processamento da imagem
+    image, region = get_sentinel2_image(lat,lon,radius_km)
+    if image is None:
+        print('Error: Nenhuma imagem encontrada para os parâmetros fornecidos.')
+        return
+    
+    #Baixando a imagem e exibindo para alguma inspeção básica de funcionamento
+    filename = f'sentinel2_{lat}_{lon}_{radius_km}km.tif'
+    image_path = download_image(image,region,output_dir,filename)
+    if image_path:
+        plot_image(image_path)
 
-#Identificação da conta de serviço do google que está conectada e tem as autoricações necessárias com o projeto do GEE
-#Variável de acesso ao google por meio de dois parâmetros, a indentificação da conta de serviço e a chave json gerada nessa conta de serviço
-service_account = 'teste-api-key@sunlit-flag-449511-f7.iam.gserviceaccount.com'
-key_path = 'D:\\codigos\\Python_curso\\google_earth\\api_key_test.json'
-project = 'ee-reginaldosg'
-output_dir = 'D:\\codigos\\imagens'
-
-initialize_gee(service_account,key_path,project)
-create_output(output_dir)
-
-image, region = get_sentinel2_image()
-image_path = download_image(image,region,'imagem_teste_PTI.tif')
+main()
