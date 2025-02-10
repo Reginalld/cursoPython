@@ -9,11 +9,11 @@ import requests
 #Identificação da conta de serviço do google que está conectada e tem as autoricações necessárias com o projeto do GEE
 service_account = 'teste-api-key@sunlit-flag-449511-f7.iam.gserviceaccount.com'
 #Variável de acesso ao google por meio de dois parâmetros, a indentificação da conta de serviço e a chave json gerada nessa conta de serviço
-credentials = ee.ServiceAccountCredentials(service_account,'layer/api_key_test.json')
+credentials = ee.ServiceAccountCredentials(service_account,'D:\\codigos\\Python_curso\\google_earth\\api_key_test.json')
 ee.Initialize(credentials,project='ee-reginaldosg')
 
 # Diretório de saída
-output_dir = '../../imagens'
+output_dir = 'D:\\codigos\\imagens'
 
 def mask_s2_clouds(image):
   """Masks clouds in a Sentinel-2 image using the QA band.
@@ -39,7 +39,7 @@ def mask_s2_clouds(image):
 
   return image.updateMask(mask).divide(10000)
 
-def get_sentinel2_image(lat, lon, radius_km=1, start_date='2024-01-01', end_date='2024-02-01'):
+def get_sentinel2_image(lat, lon, radius_km=5, start_date='2024-01-01', end_date='2024-02-01'):
     
     # Obtém imagens do Sentinel-2A para uma área específica com um raio definido
     point = ee.Geometry.Point([lon,lat])
@@ -53,12 +53,11 @@ def get_sentinel2_image(lat, lon, radius_km=1, start_date='2024-01-01', end_date
         .map(mask_s2_clouds)
     
     image = collection.first()
-    image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde e Azul
+    image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde, Azul e NIR para cálculo de NDVI
     return image, region
 
 def download_image(image, region, file):
 
-    # Faz o dowload da imagem para o diretório especificado
 
     #  url = image.getDownloadURL({
     #     'scale': 30,
@@ -92,11 +91,10 @@ def download_image(image, region, file):
 
 def plot_image(filepath):
     
-    # Exibe a imagem usando rasterio e matplotlib
 
     with rasterio.open(filepath) as src:
         fig, ax= plt.subplots(figsize=(10,10))
-        show(src.read([3,2,1]), ax=ax) # Bandas RGB
+        show(src.read([3,2,1]), ax=ax) 
         plt.title('Sentinel-2A Imagem RGB')
         plt.show()
 
