@@ -46,11 +46,11 @@ def mask_s1_edges(image):
     masked_image = image.mask().And(edge.Not())
     return image.updateMask(masked_image)
 
-def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', end_date='2025-02-01'):
+def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2024-12-01', end_date='2025-02-01'):
     # Obtém imagens do Sentinel-2A para uma área específica com um raio definido
     try:
         point = ee.Geometry.Point([lon,lat])
-        region = point.buffer(radius_km * 1000)
+        region = point.buffer(radius_km * 500).bounds()
 
         if satelite == 'Sentinel-2_SR':
             collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\
@@ -60,8 +60,9 @@ def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', 
                     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20)) \
                     .map(mask_s2_clouds)
             
-            image = collection.first()
-            image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde, Azul e NIR para cálculo de NDVI
+            image = collection.median()
+            image = image.select(['B4', 'B3', 'B2', 'B8'])
+            image = image.reproject('EPSG:4326', None, 10)  # Adiciona projeção fixa
         
         elif satelite == 'Sentinel-2':
             collection = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')\
@@ -70,8 +71,9 @@ def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', 
                     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20))\
                     .map(mask_s2_clouds)
             
-            image = collection.first()
-            image = image.select(['B4','B3','B2','B8'])
+            image = collection.median()
+            image = image.select(['B4', 'B3', 'B2', 'B8'])
+            image = image.reproject('EPSG:4326', None, 10)  # Adiciona projeção fixa
 
 
         elif satelite == 'Sentinel-1':
@@ -82,7 +84,9 @@ def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', 
                 .filter(ee.Filter.eq('instrumentMode', 'IW'))\
                 .map(mask_s1_edges)
             
-            image = collection.median().select('VV')    
+            image = collection.qualityMosaic('VV')
+            image = image.reproject('EPSG:4326', None, 10)  # Força uma projeção fixa
+
         else:
             raise ValueError('Satélite não suportado. Escolha entre os satélites informados')
         
@@ -102,10 +106,11 @@ def download_image(image, region, output_dir,filename):
     try:
         if image is None:
             raise ValueError("Imagem inválida. Verifique os parâmetros.")
-        url = image.getDownloadURL({'scale': 10, 'region': region, 'format': 'GeoTIFF'})
         filepath = os.path.join(output_dir, filename)
-        geemap.download_file(url, filepath, overwrite=True)
-        print(f"Imagem salva em: {filepath}")
+        geemap.download_ee_image(image,filepath,scale=10,region=region)
+        # url = image.getDownloadURL({'scale': 10, 'region': region, 'format': 'GeoTIFF'})
+        # geemap.download_file(url, filepath, overwrite=True)
+        # print(f"Imagem salva em: {filepath}")
         return filepath
     except Exception as e:
         raise RuntimeError('Erro ao fazer download da imagem',e)
@@ -137,7 +142,7 @@ def main():
     #Identificação da conta de serviço do google que está conectada e tem as autoricações necessárias com o projeto do GEE
     #Variável de acesso ao google por meio de dois parâmetros, a indentificação da conta de serviço e a chave json gerada nessa conta de serviço
     service_account = 'teste-api-key@sunlit-flag-449511-f7.iam.gserviceaccount.com'
-    key_path = 'D:\\codigos\\Python_curso\\google_earth\\api_key_test.json'
+    key_path = 'D:\\codigos\\Python_curso\\google_earth\\layer\\api_key_test.json'
     project = 'ee-reginaldosg'
     output_dir = 'D:\\codigos\\imagens'
     initialize_gee(service_account,key_path,project)
@@ -162,9 +167,7 @@ def main():
         
         #Baixando a imagem e exibindo para alguma inspeção básica de funcionamento
         filename = f'{satelite}_{lat}_{lon}_{radius_km}km.tif'
-        image_path = download_image(image,region,output_dir,filename)
-        if image_path:
-            plot_image(image_path,satelite)
+        download_image(image,region,output_dir,filename)
             
         repeat = input("Deseja processar outra imagem? (s/n): ").strip().lower()
         if repeat != 's':
