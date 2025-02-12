@@ -5,16 +5,29 @@ import rasterio
 from rasterio.plot import show
 from matplotlib import pyplot as plt
 import requests
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,  # Pode ser DEBUG, INFO, WARNING, ERROR
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("sentinel_log.txt"),  # Salva em arquivo
+        logging.StreamHandler()  # Exibe no console
+    ]
+)
 
 def initialize_gee(service_account, key_path,project):
     #Inicializado o GEE com a conta de serviço fornecida
     try:
+        logging.info("Inicializando o Google Earth Engine (GEE)...")
         if not os.path.exists(key_path):
+            logging.error(f"Arquivo de chave de serviço não encontrado: {key_path}")
             raise FileNotFoundError(f"Arquivo de chave de serviço não encontrado: {key_path}")
         credentials = ee.ServiceAccountCredentials(service_account,key_path)
         ee.Initialize(credentials,project=project)
-        print('GEE inicializado com sucesso')
+        logging.info(f"GEE inicializado com sucesso para o projeto {project}")
     except Exception as e:
+        logging.critical(f"Erro ao inicializar o GEE: {e}", exc_info=True)
         raise RuntimeError(f"Erro ao inicializar o GEE: {e}")
 
 def create_output(output_dir):
@@ -49,6 +62,7 @@ def mask_s1_edges(image):
 def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2024-12-01', end_date='2025-02-01'):
     # Obtém imagens do Sentinel-2A para uma área específica com um raio definido
     try:
+        logging.info(f"Buscando imagens do {satelite} para ({lat}, {lon}) com raio de {radius_km} km...")
         point = ee.Geometry.Point([lon,lat])
         region = point.buffer(radius_km * 500).bounds()
 
@@ -88,31 +102,38 @@ def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2024-12-01', 
             image = image.reproject('EPSG:4326', None, 10)  # Força uma projeção fixa
 
         else:
+            logging.warning(f"Satélite {satelite} não suportado!")
             raise ValueError('Satélite não suportado. Escolha entre os satélites informados')
         
         count = collection.size().getInfo()
-        print(f"{count} imagens encontradas para a região.") 
+        logging.info(f"{count} imagens encontradas para {satelite}.")
 
         if count == 0:
+            logging.warning("Nenhuma imagem encontrada para os parâmetros fornecidos.")
             raise ValueError("Nenhuma imagem encontrada para os parâmetros fornecidos.")
         
         return image, region
     
     except Exception as e:
-        print(f'Erro ao obter imagem {satelite}: {e}')
+        logging.error(f"Erro ao obter imagem {satelite}: {e}", exc_info=True)
         return None,None
 
 def download_image(image, region, output_dir,filename):
     try:
         if image is None:
+            logging.error("Tentativa de download com imagem inválida.")
             raise ValueError("Imagem inválida. Verifique os parâmetros.")
         filepath = os.path.join(output_dir, filename)
+        logging.info(f"Iniciando download da imagem para {filepath}...")
+
         geemap.download_ee_image(image,filepath,scale=10,region=region)
+        logging.info(f"Download concluído: {filepath}")
         # url = image.getDownloadURL({'scale': 10, 'region': region, 'format': 'GeoTIFF'})
         # geemap.download_file(url, filepath, overwrite=True)
         # print(f"Imagem salva em: {filepath}")
         return filepath
     except Exception as e:
+        logging.critical(f"Erro ao fazer download da imagem: {e}", exc_info=True)
         raise RuntimeError('Erro ao fazer download da imagem',e)
 
 def plot_image(filepath,satelite):
@@ -156,13 +177,13 @@ def main():
             lon = float(input('Digite a longitude: '))
             radius_km = float(input('Digite o raio em km: '))
         except ValueError:
-            print('Erro: Entrada inválida. Certifique-se de inserir números válidos')
+            logging.error("Erro: Entrada inválida do usuário.")
             continue
         
         #Processamento da imagem
         image, region = get_sentinel_image(satelite,lat,lon,radius_km)
         if image is None:
-            print('Error: Nenhuma imagem encontrada para os parâmetros fornecidos.')
+            logging.warning("Nenhuma imagem encontrada.")
             continue
         
         #Baixando a imagem e exibindo para alguma inspeção básica de funcionamento
@@ -171,6 +192,7 @@ def main():
             
         repeat = input("Deseja processar outra imagem? (s/n): ").strip().lower()
         if repeat != 's':
+            logging.info("Encerrando o programa.")
             break
 
 main()
