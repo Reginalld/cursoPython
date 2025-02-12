@@ -1,19 +1,33 @@
 import os
 import ee
 import geemap
+import rasterio
 from rasterio.plot import show
 from matplotlib import pyplot as plt
+import logging
 import typer
+
+logging.basicConfig(
+    level=logging.INFO,  # Pode ser DEBUG, INFO, WARNING, ERROR
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("sentinel_log.txt"),  # Salva em arquivo
+        logging.StreamHandler()  # Exibe no console
+    ]
+)
 
 def initialize_gee(service_account, key_path,project):
     #Inicializado o GEE com a conta de serviço fornecida
     try:
+        logging.info("Inicializando o Google Earth Engine (GEE)...")
         if not os.path.exists(key_path):
+            logging.error(f"Arquivo de chave de serviço não encontrado: {key_path}")
             raise FileNotFoundError(f"Arquivo de chave de serviço não encontrado: {key_path}")
         credentials = ee.ServiceAccountCredentials(service_account,key_path)
         ee.Initialize(credentials,project=project)
-        print('GEE inicializado com sucesso')
+        logging.info(f"GEE inicializado com sucesso para o projeto {project}")
     except Exception as e:
+        logging.critical(f"Erro ao inicializar o GEE: {e}", exc_info=True)
         raise RuntimeError(f"Erro ao inicializar o GEE: {e}")
 
 def create_output(output_dir):
@@ -45,11 +59,12 @@ def mask_s1_edges(image):
     masked_image = image.mask().And(edge.Not())
     return image.updateMask(masked_image)
 
-def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', end_date='2025-02-01'):
+def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2024-12-01', end_date='2025-02-01'):
     # Obtém imagens do Sentinel-2A para uma área específica com um raio definido
     try:
+        logging.info(f"Buscando imagens do {satelite} para ({lat}, {lon}) com raio de {radius_km} km...")
         point = ee.Geometry.Point([lon,lat])
-        region = point.buffer(radius_km * 1000)
+        region = point.buffer(radius_km * 500).bounds()
 
         if satelite == 'Sentinel-2_SR':
             collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\
@@ -59,8 +74,9 @@ def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', 
                     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20)) \
                     .map(mask_s2_clouds)
             
-            image = collection.first()
-            image = image.select(['B4', 'B3', 'B2','B8'])  # Bandas Vermelho, Verde, Azul e NIR para cálculo de NDVI
+            image = collection.median()
+            image = image.select(['B4', 'B3', 'B2', 'B8'])
+            image = image.reproject('EPSG:4326', None, 10)  # Adiciona projeção fixa
         
         elif satelite == 'Sentinel-2':
             collection = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')\
@@ -69,8 +85,9 @@ def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', 
                     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20))\
                     .map(mask_s2_clouds)
             
-            image = collection.first()
-            image = image.select(['B4','B3','B2','B8'])
+            image = collection.median()
+            image = image.select(['B4', 'B3', 'B2', 'B8'])
+            image = image.reproject('EPSG:4326', None, 10)  # Adiciona projeção fixa
 
 
         elif satelite == 'Sentinel-1':
@@ -81,34 +98,44 @@ def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2025-01-01', 
                 .filter(ee.Filter.eq('instrumentMode', 'IW'))\
                 .map(mask_s1_edges)
             
-            image = collection.median().select('VV')    
+            image = collection.qualityMosaic('VV')
+            image = image.reproject('EPSG:4326', None, 10)  # Força uma projeção fixa
+
         else:
+            logging.warning(f"Satélite {satelite} não suportado!")
             raise ValueError('Satélite não suportado. Escolha entre os satélites informados')
         
         count = collection.size().getInfo()
-        print(f"{count} imagens encontradas para a região.") 
+        logging.info(f"{count} imagens encontradas para {satelite}.")
 
         if count == 0:
+            logging.warning("Nenhuma imagem encontrada para os parâmetros fornecidos.")
             raise ValueError("Nenhuma imagem encontrada para os parâmetros fornecidos.")
         
         return image, region
     
     except Exception as e:
-        print(f'Erro ao obter imagem {satelite}: {e}')
+        logging.error(f"Erro ao obter imagem {satelite}: {e}", exc_info=True)
         return None,None
 
 def download_image(image, region, output_dir,filename):
     try:
         if image is None:
+            logging.error("Tentativa de download com imagem inválida.")
             raise ValueError("Imagem inválida. Verifique os parâmetros.")
-        url = image.getDownloadURL({'scale': 10, 'region': region, 'format': 'GeoTIFF'})
         filepath = os.path.join(output_dir, filename)
-        geemap.download_file(url, filepath, overwrite=True)
-        print(f"Imagem salva em: {filepath}")
+        logging.info(f"Iniciando download da imagem para {filepath}...")
+
+        geemap.download_ee_image(image,filepath,scale=10,region=region)
+        logging.info(f"Download concluído: {filepath}")
+        # url = image.getDownloadURL({'scale': 10, 'region': region, 'format': 'GeoTIFF'})
+        # geemap.download_file(url, filepath, overwrite=True)
+        # print(f"Imagem salva em: {filepath}")
         return filepath
     except Exception as e:
+        logging.critical(f"Erro ao fazer download da imagem: {e}", exc_info=True)
         raise RuntimeError('Erro ao fazer download da imagem',e)
-
+    
 app = typer.Typer()
 
 @app.command()
@@ -122,18 +149,20 @@ def main(
     project: str = typer.Option("ee-reginaldosg", help="Nome do projeto GEE"),
     output_dir: str = typer.Option("D:\\codigos\\imagens", help="Diretório de saída para salvar as imagens"),
 ):
- 
-    """Baixa imagens de satélite do Google Earth Engine."""
-    initialize_gee(service_account, key_path, project)
+
+    initialize_gee(service_account,key_path,project)
     create_output(output_dir)
-    
-    image, region = get_sentinel_image(satelite, lat, lon, radius_km)
+
+        
+    #Processamento da imagem
+    image, region = get_sentinel_image(satelite,lat,lon,radius_km)
     if image is None:
-        typer.echo("Erro: Nenhuma imagem encontrada para os parâmetros fornecidos.")
-        raise typer.Exit(code=1)
-    
-    filename = f"{satelite}_{lat}_{lon}_{radius_km}km.tif"
-    download_image(image, region, output_dir, filename)
+        logging.warning("Nenhuma imagem encontrada.")
+            
+        
+    #Baixando a imagem e exibindo para alguma inspeção básica de funcionamento
+    filename = f'{satelite}_{lat}_{lon}_{radius_km}km.tif'
+    download_image(image,region,output_dir,filename)
             
 
 if __name__ == "__main__":
