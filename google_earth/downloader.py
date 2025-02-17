@@ -59,12 +59,12 @@ def mask_s1_edges(image):
     masked_image = image.mask().And(edge.Not())
     return image.updateMask(masked_image)
 
-def get_sentinel_image(satelite,lat, lon, radius_km=5, start_date='2024-12-01', end_date='2025-02-01'):
-    # Obtém imagens do Sentinel-2A para uma área específica com um raio definido
+def get_sentinel_image(satelite,lat, lon, radius_km, start_date='2023-03-29', end_date='2023-04-07'):
+    # Obtém imagens do Sentinel-2A para uma área específica com um raio definidos
     try:
         logging.info(f"Buscando imagens do {satelite} para ({lat}, {lon}) com raio de {radius_km} km...")
         point = ee.Geometry.Point([lon,lat])
-        region = point.buffer(radius_km * 500).bounds()
+        region = point.buffer(radius_km * 1000).bounds()
 
         if satelite == 'Sentinel-2_SR':
             collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\
@@ -143,7 +143,9 @@ def main(
     satelite: str = typer.Argument(..., help="Escolha um satélite (Sentinel-1, Sentinel-2_SR, Sentinel-2)"),
     lat: float = typer.Argument(..., help="Latitude da área de interesse",show_default=True),
     lon: float = typer.Argument(..., help="Longitude da área de interesse",show_default=True),
-    radius_km: float = typer.Argument(5.0, help="Raio da área de interesse em km",show_default=True),
+    radius_km: float = typer.Argument(..., help="Raio da área de interesse em km",show_default=True),
+    start_date: str = typer.Argument(..., help="Data de início da área de interesse",show_default=True),
+    end_date: str = typer.Argument(..., help="Data final da área de interesse",show_default=True),
     service_account: str = typer.Option("teste-api-key@sunlit-flag-449511-f7.iam.gserviceaccount.com", help="Conta de serviço do GEE"),
     key_path: str = typer.Option("D:\\codigos\\Python_curso\\google_earth\\api_key_test.json", help="Caminho para a chave JSON da conta de serviço"),
     project: str = typer.Option("ee-reginaldosg", help="Nome do projeto GEE"),
@@ -155,15 +157,13 @@ def main(
 
         
     #Processamento da imagem
-    image, region = get_sentinel_image(satelite,lat,lon,radius_km)
+    image, region = get_sentinel_image(satelite,lat,lon,radius_km,start_date,end_date)
     if image is None:
         logging.warning("Nenhuma imagem encontrada.")
-            
-        
-    #Baixando a imagem e exibindo para alguma inspeção básica de funcionamento
-    filename = f'{satelite}_{lat}_{lon}_{radius_km}km.tif'
-    download_image(image,region,output_dir,filename)
-            
+    else:        
+        #Baixando a imagem e exibindo para alguma inspeção básica de funcionamento
+        filename = f'{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}.tif'
+        download_image(image,region,output_dir,filename)
 
 if __name__ == "__main__":
     app()
