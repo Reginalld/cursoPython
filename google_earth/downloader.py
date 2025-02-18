@@ -11,7 +11,7 @@ logging.basicConfig(
     level=logging.INFO,  # Pode ser DEBUG, INFO, WARNING, ERROR
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("sentinel_log.txt"),  # Salva em arquivo
+        logging.FileHandler("google_earth\\log\\sentinel_log.txt"),  # Salva em arquivo
         logging.StreamHandler()  # Exibe no console
     ]
 )
@@ -147,7 +147,7 @@ def main(
     start_date: str = typer.Argument(..., help="Data de início da área de interesse",show_default=True),
     end_date: str = typer.Argument(..., help="Data final da área de interesse",show_default=True),
     service_account: str = typer.Option("teste-api-key@sunlit-flag-449511-f7.iam.gserviceaccount.com", help="Conta de serviço do GEE"),
-    key_path: str = typer.Option("D:\\codigos\\Python_curso\\google_earth\\api_key_test.json", help="Caminho para a chave JSON da conta de serviço"),
+    key_path: str = typer.Option("google_earth\\key\\api_key_test.json", help="Caminho para a chave JSON da conta de serviço"),
     project: str = typer.Option("ee-reginaldosg", help="Nome do projeto GEE"),
     output_dir: str = typer.Option("D:\\codigos\\imagens", help="Diretório de saída para salvar as imagens"),
 ):
