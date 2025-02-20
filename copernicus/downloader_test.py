@@ -2,12 +2,13 @@ import openeo
 import math
 import logging
 import os
+import time
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("copernicus/log/copernicus_log.txt"),
+        logging.FileHandler("copernicus\\log\\copernicus_log.txt"),
         logging.StreamHandler() #Exibe no console
     ]
 )
@@ -63,6 +64,7 @@ def get_satelite_image(connection,satelite,bounding_box,start_date,end_date,lat,
                 max_cloud_cover=20,
 
             )
+            #image = image.reduce_dimension(dimension="t", reducer="min_time")
             image = image.reduce_dimension(dimension='t', reducer='median')
         
         elif satelite == 'SENTINEL1_GRD':
@@ -86,30 +88,41 @@ def get_satelite_image(connection,satelite,bounding_box,start_date,end_date,lat,
         logging.error(f'Erro ao obter imagem do {satelite}: {e}', exc_info=True)
         return None
     
-def download_image(image, output_dir, filename,radius):
+def download_image(image, output_dir, filename, radius):
     try:
         if image is None:
             logging.error("Tentativa de download com imagem inválida")
             raise ValueError("Imagem inválida. Verifique os parâmetros")
+       
         filepath = os.path.join(output_dir,filename)
         logging.info(f"Iniciando download da imagem para {filepath}...")
 
-        # if radius >=97:
-        #     image.execute_batch()
-        image.execute_batch(filepath)
-        logging.info(f"Download concluído: {filepath}...")
-        return filepath
-    
+        job = image.create_job(title=filename, description="Download via bach job")
+        job.start()
+        logging.info(f"Job {job.job_id}.")
 
-    
+        while True:
+            status = job.status()
+            logging.info(f"Status do job {job.job_id}: {status}")
+            if status == 'finished':
+                logging.info(f"Job {job.job_id} concluído. Iniciando download...")
+                results = job.get_results()
+                results.download_file(filepath)
+                break
+            elif status in ['error', 'canceled']:
+                raise RuntimeError(f'Job {job.job_id} falhou com status: {status}')
+            else:
+                time.sleep(20)
+        return filepath
+
     except Exception as e:
-        logging.critical(f"Erro ao fazer download da imagem {e}", exc_info=True)
-        raise RuntimeError("Erro ao fazer download da imagem",e)
+        logging.error(f"Erro ao fazer download da imagem: {str(e)}")
+        raise RuntimeError("Erro ao fazer download da imagem", e)
 
 ponto_central_lat = -25.436234077037668 
 ponto_central_lon = -54.59553194719978
-raio_km = 90
-start_date = '2024-12-25'
+raio_km = 10
+start_date = '2024-10-25'
 end_date = '2025-01-25'
 satelite = 'SENTINEL2_L1C'
 
@@ -136,7 +149,7 @@ satelites = ['SENTINEL3_OLCI_L1B',
 def main():
     client_id = 'sh-780be612-cdd5-46c2-be80-016e3d9e3941'
     client_secret = 'wNqrCLhYnogycEclvClgVfrCRzNxjzec'
-    output_dir = '../../imagens'
+    output_dir = 'D:\\codigos\\imagens'
     connection = initialize_copernicus(client_id,client_secret)
     bounding_box = calcular_bouding_box(ponto_central_lat,ponto_central_lon,raio_km)
     create_output(output_dir)

@@ -73,7 +73,7 @@ class SentinelImageSearch:
         try:
             logging.info(f"Buscando imagens do {self.satelite} para ({self.lat}, {self.lon}) com raio de {self.radius_km} km...")
             point = ee.Geometry.Point([self.lon,self.lat])
-            region = point.buffer(self.radius_km * 500).bounds()
+            region = point.buffer(self.radius_km * 1000).bounds()
 
             if self.satelite == 'Sentinel-2_SR':
                 collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\
