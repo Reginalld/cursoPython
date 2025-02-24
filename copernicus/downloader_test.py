@@ -3,162 +3,168 @@ import math
 import logging
 import os
 import time
+import typer
+
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler("copernicus\\log\\copernicus_log.txt"),
-        logging.StreamHandler() #Exibe no console
+        logging.StreamHandler()
     ]
 )
 
-def initialize_copernicus(client_id, client_secret):
-    try:
-        logging.info("Inicializando a conexão com a Data Base da copernicus...")
-        connection = openeo.connect('openeofed.dataspace.copernicus.eu')
-        connection.authenticate_oidc_client_credentials(client_id,client_secret,provider_id='CDSE')
-        return connection
-    except Exception as e:
-        logging.critical(f"Erro ao inicializar o copernicus: {e}", exc_info=True)
-        raise RuntimeError(f"Erro ao iniciazliar o copernicus {e}")
-    
-def create_output(output_dir):
-    # Função para criar o diretório de saída, caso não exista
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+class CopernicusConnection:
+    def __init__(self, client_id, client_secret):
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.connection = None
+
+    def initialize(self):
+        try:
+            logging.info("Inicializando a conexão com a Data Base da copernicus...")
+            self.connection = openeo.connect('openeofed.dataspace.copernicus.eu')
+            self.connection.authenticate_oidc_client_credentials(self.client_id, self.client_secret, provider_id='CDSE')
+        except Exception as e:
+            logging.critical(f"Erro ao inicializar o copernicus: {e}", exc_info=True)
+            raise RuntimeError(f"Erro ao inicializar o copernicus {e}")
+
+    def get_connection(self):
+        if self.connection is None:
+            self.initialize()
+        return self.connection
 
 
+class DirectoryManager:
+    @staticmethod
+    def create_output(output_dir):
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
 
-def calcular_bouding_box (lat,lon,raio_km):
-    raio_graus_lat = raio_km / 111
-    raio_graus_lon = raio_km / (111 * math.cos(math.radians(lat)))
 
-    west = lon - raio_graus_lon
-    east = lon + raio_graus_lon
-    south = lat - raio_graus_lat
-    north = lat + raio_graus_lat
+class BoundingBoxCalculator:
+    @staticmethod
+    def calcular(lat, lon, raio_km):
+        raio_graus_lat = raio_km / 111
+        raio_graus_lon = raio_km / (111 * math.cos(math.radians(lat)))
 
-    return {'west': west, 'south':south, 'east':east, 'north': north,'crs': 'EPSG:4326',}
+        return {
+            'west': lon - raio_graus_lon,
+            'south': lat - raio_graus_lat,
+            'east': lon + raio_graus_lon,
+            'north': lat + raio_graus_lat,
+            'crs': 'EPSG:4326',
+        }
 
-def get_satelite_image(connection,satelite,bounding_box,start_date,end_date,lat,lon,radius):
-    try:
-        logging.info(f"Buscando imagens do {satelite} para ({lat}, {lon}) com raio de {radius}km...")
-        if satelite == 'SENTINEL2_L2A':
-            image = connection.load_collection(
-                "SENTINEL2_L2A",
-                spatial_extent=bounding_box,
-                temporal_extent = [start_date, end_date],
-                bands=["B02", "B03", "B04", "B08"],
-                max_cloud_cover=20,
 
-            )
-            image = image.reduce_dimension(dimension='t', reducer='median')
+class SatelliteImageFetcher:
+    def __init__(self, connection):
+        self.connection = connection
 
-        elif satelite == 'SENTINEL2_L1C':
-            image = connection.load_collection(
-                "SENTINEL2_L2A",
-                spatial_extent=bounding_box,
-                temporal_extent = [start_date, end_date],
-                bands=["B02", "B03", "B04", "B08"],
-                max_cloud_cover=20,
+    def fetch_image(self, satelite, bounding_box, start_date, end_date):
+        try:
+            logging.info(f"Buscando imagens do {satelite}...")
+            collection_params = {
+                "spatial_extent": bounding_box,
+                "temporal_extent": [start_date, end_date],
+            }
 
-            )
-            #image = image.reduce_dimension(dimension="t", reducer="min_time")
-            image = image.reduce_dimension(dimension='t', reducer='median')
-        
-        elif satelite == 'SENTINEL1_GRD':
-            image = connection.load_collection(
-                "SENTINEL1_GRD",
-                spatial_extent=bounding_box,
-                temporal_extent = [start_date,end_date],
-                bands = ["VV","VH"]
-            )
-            image = image.sar_backscatter(
-                coefficient = 'sigma0-ellipsoid'
-            )
+            if satelite == 'SENTINEL2_L2A':
+                collection_params.update({"bands": ["B02", "B03", "B04", "B08"], "max_cloud_cover": 20})
+                image = self.connection.load_collection("SENTINEL2_L2A", **collection_params)
+                image = image.reduce_dimension(dimension='t', reducer='median')
 
-        else:
-            logging.warning(f"Satélite {satelite} não suportado!")
-            raise ValueError("Satélite não suportado. Escolha entre os satélites informados")
-        
-        return image
+            elif satelite == 'SENTINEL2_L1C':
+                collection_params.update({"bands": ["B02", "B03", "B04", "B08"], "max_cloud_cover": 20})
+                image = self.connection.load_collection("SENTINEL2_L1C", **collection_params)
+                image = image.reduce_dimension(dimension='t', reducer='median')
 
-    except Exception as e:
-        logging.error(f'Erro ao obter imagem do {satelite}: {e}', exc_info=True)
-        return None
-    
-def download_image(image, output_dir, filename, radius):
-    try:
-        if image is None:
-            logging.error("Tentativa de download com imagem inválida")
-            raise ValueError("Imagem inválida. Verifique os parâmetros")
-       
-        filepath = os.path.join(output_dir,filename)
-        logging.info(f"Iniciando download da imagem para {filepath}...")
+            elif satelite == 'SENTINEL1_GRD':
+                collection_params.update({"bands": ["VV", "VH"]})
+                image = self.connection.load_collection("SENTINEL1_GRD", **collection_params)
+                image = image.sar_backscatter(coefficient='sigma0-ellipsoid')
 
-        job = image.create_job(title=filename, description="Download via bach job")
-        job.start()
-        logging.info(f"Job {job.job_id}.")
+            elif satelite == 'LANDSAT8_L2':
+                collection_params.update({"bands": ["SR_B2", "SR_B3", "SR_B4", "SR_B5"], "max_cloud_cover": 20})
+                image = self.connection.load_collection("LANDSAT8_L2", **collection_params)
 
-        while True:
-            status = job.status()
-            logging.info(f"Status do job {job.job_id}: {status}")
-            if status == 'finished':
-                logging.info(f"Job {job.job_id} concluído. Iniciando download...")
-                results = job.get_results()
-                results.download_file(filepath)
-                break
-            elif status in ['error', 'canceled']:
-                raise RuntimeError(f'Job {job.job_id} falhou com status: {status}')
             else:
-                time.sleep(20)
-        return filepath
+                logging.warning(f"Satélite {satelite} não suportado!")
+                raise ValueError("Satélite não suportado.")
 
-    except Exception as e:
-        logging.error(f"Erro ao fazer download da imagem: {str(e)}")
-        raise RuntimeError("Erro ao fazer download da imagem", e)
+            return image
+        except Exception as e:
+            logging.error(f'Erro ao obter imagem do {satelite}: {e}', exc_info=True)
+            return None
 
-ponto_central_lat = -25.436234077037668 
-ponto_central_lon = -54.59553194719978
-raio_km = 10
-start_date = '2024-10-25'
-end_date = '2025-01-25'
-satelite = 'SENTINEL2_L1C'
 
-satelites = ['SENTINEL3_OLCI_L1B',
- 'SENTINEL3_SLSTR',
- 'SENTINEL_5P_L2',
- 'COPERNICUS_VEGETATION_PHENOLOGY_PRODUCTIVITY_10M_SEASON1',
- 'COPERNICUS_VEGETATION_PHENOLOGY_PRODUCTIVITY_10M_SEASON2',
- 'COPERNICUS_PLANT_PHENOLOGY_INDEX',
- 'ESA_WORLDCOVER_10M_2020_V1',
- 'ESA_WORLDCOVER_10M_2021_V2',
- 'COPERNICUS_VEGETATION_INDICES',
- 'SENTINEL2_L1C',
- 'SENTINEL2_L2A',
- 'SENTINEL1_GRD',
- 'COPERNICUS_30',
- 'LANDSAT8_L2',
- 'SENTINEL3_SYN_L2_SYN',
- 'SENTINEL3_SLSTR_L2_LST',
- 'SENTINEL1_GLOBAL_MOSAICS']
+class ImageDownloader:
+    @staticmethod
+    def download(image, output_dir, filename):
+        try:
+            if image is None:
+                logging.error("Tentativa de download com imagem inválida")
+                raise ValueError("Imagem inválida.")
+            
+                  # job = image.create_job(title=filename, description="Download via bach job")
+        # job.start()
+        # logging.info(f"Job {job.job_id}.")
 
-# job = datacube.execute_batch("../../imagens/evi-composite.tiff", out_format="GTiff", title="Sentinel2_Download")
+        # while True:
+        #     status = job.status()
+        #     logging.info(f"Status do job {job.job_id}: {status}")
+        #     if status == 'finished':
+        #         logging.info(f"Job {job.job_id} concluído. Iniciando download...")
+        #         results = job.get_results()
+        #         results.download_file(filepath)
+        #         break
+        #     elif status in ['error', 'canceled']:
+        #         raise RuntimeError(f'Job {job.job_id} falhou com status: {status}')
+        #     else:
+        #         time.sleep(20)
 
-def main():
-    client_id = 'sh-780be612-cdd5-46c2-be80-016e3d9e3941'
-    client_secret = 'wNqrCLhYnogycEclvClgVfrCRzNxjzec'
-    output_dir = 'D:\\codigos\\imagens'
-    connection = initialize_copernicus(client_id,client_secret)
-    bounding_box = calcular_bouding_box(ponto_central_lat,ponto_central_lon,raio_km)
-    create_output(output_dir)
-    image = get_satelite_image(connection,satelite,bounding_box,start_date,end_date,ponto_central_lat,ponto_central_lon,raio_km)
-    
+            filepath = os.path.join(output_dir, filename)
+            logging.info(f"Iniciando download da imagem para {filepath}...")
+            image.download(filepath)
+            return filepath
+
+        except Exception as e:
+            logging.error(f"Erro ao fazer download da imagem: {str(e)}")
+            raise RuntimeError("Erro ao fazer download da imagem", e)
+
+
+app = typer.Typer()
+
+
+@app.command()
+def main(
+    satelite: str = typer.Argument(..., help="Escolha um satélite (SENTINEL2_L1C, SENTINEL2_L2A, SENTINEL1_GRD)"),
+    lat: float = typer.Argument(..., help="Latitude da área de interesse"),
+    lon: float = typer.Argument(..., help="Longitude da área de interesse"),
+    radius_km: float = typer.Argument(10.0, help="Raio da área de interesse em km"),
+    start_date: str = typer.Argument(..., help="Data de início (YYYY-MM-DD)"),
+    end_date: str = typer.Argument(..., help="Data final (YYYY-MM-DD)"),
+    client_id: str = typer.Option('sh-780be612-cdd5-46c2-be80-016e3d9e3941', help="Client ID da conta Copernicus"),
+    client_secret: str = typer.Option('wNqrCLhYnogycEclvClgVfrCRzNxjzec', help="Client Secret da conta Copernicus"),
+    output_dir: str = typer.Option("D:\\codigos\\imagens", help="Diretório de saída para salvar as imagens"),
+):
+    copernicus_conn = CopernicusConnection(client_id, client_secret)
+    copernicus_conn.initialize()
+
+    bounding_box = BoundingBoxCalculator.calcular(lat, lon, radius_km)
+    DirectoryManager.create_output(output_dir)
+
+    fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
+    image = fetcher.fetch_image(satelite, bounding_box, start_date, end_date)
+
     if image is None:
         logging.warning('Nenhuma imagem encontrada')
+        return
 
-    filename = f'{satelite}_{ponto_central_lat}_{ponto_central_lon}_{raio_km}km_{start_date}_{end_date}.tif'
-    download_image(image,output_dir,filename,raio_km)
+    filename = f'{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}.tif'
+    ImageDownloader.download(image, output_dir, filename)
 
-main()
+
+if __name__ == "__main__":
+    app()
