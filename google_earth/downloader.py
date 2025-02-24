@@ -67,6 +67,34 @@ class SentinelImageSearch:
         edge = image.lt(-30.0)
         masked_image = image.mask().And(edge.Not())
         return image.updateMask(masked_image)
+    
+    def apply_scale_factors(self,image):
+        optical_bands = image.select('SR_B.*').multiply(0.0000275).add(-0.2)
+        thermal_bands = image.select('ST_B.*').multiply(0.00341802).add(149.0)
+        return image.addBands(optical_bands, None, True).addBands(
+            thermal_bands, None, True
+        )
+    
+    def mask_l8_clouds(self,image):
+        """Masks clouds in a Landsat 8 image using the QA_PIXEL band.
+        
+        Args:
+            image (ee.Image): A Landsat 8 image.
+        
+        Returns:
+            ee.Image: A cloud-masked Landsat 8 image.
+        """
+        qa = image.select('QA_PIXEL')
+        
+        # Bits de interesse na QA_PIXEL
+        cloud_bit = 1 << 3  # Indica a presença de nuvens
+        cloud_shadow_bit = 1 << 4  # Indica a presença de sombras de nuvem
+
+        # Criação da máscara (onde os bits de nuvem e sombra são 0, ou seja, sem nuvens)
+        mask = qa.bitwiseAnd(cloud_bit).eq(0).And(qa.bitwiseAnd(cloud_shadow_bit).eq(0))
+
+        # Aplica a máscara e mantém apenas os pixels válidos
+        return image.updateMask(mask)
         
     def get_sentinel_image(self):
         # Obtém imagens para uma área específica com um raio definido
@@ -75,7 +103,52 @@ class SentinelImageSearch:
             point = ee.Geometry.Point([self.lon,self.lat])
             region = point.buffer(self.radius_km * 1000).bounds()
 
-            if self.satelite == 'Sentinel-2_SR':
+            if self.satelite == 'Landsat8_T1_L2':
+                collection = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')\
+                    .filterBounds(region)\
+                    .filterDate(ee.Date(self.start_date), ee.Date(self.end_date))
+
+                # Aplicando a máscara de nuvens
+                collection = collection.map(self.mask_l8_clouds)
+
+                # Aplicando a mediana e os fatores de escala
+                image = collection.median()
+                image = self.apply_scale_factors(image)
+
+                # Selecionando as bandas desejadas
+                image = image.select(['SR_B4', 'SR_B3', 'SR_B2', 'SR_B5'])
+
+                # Reprojetando
+                image = image.reproject('EPSG:4326', None, 30)
+
+            elif self.satelite == 'Landsat8_T1_TOA':
+                collection = ee.ImageCollection('LANDSAT/LC08/C02/T1_TOA')\
+                        .filterBounds(region)\
+                        .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
+
+                image = collection.median()
+                image = image.select(['B2','B3','B4','B5'])
+                image = image.reproject('EPSG:4326', None, 30)
+
+            elif self.satelite == 'Landsat8_T1':
+                collection = ee.ImageCollection('LANDSAT/LC08/C02/T1')\
+                        .filterBounds(region)\
+                        .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
+                        
+                image = collection.median()
+                image = image.select(['B2','B3','B4','B5'])
+                image = image.reproject('EPSG:4326', None, 30)
+            
+            elif self.satelite == 'Landsat9_T1':
+                collection = ee.ImageCollection('LANDSAT/LC09/C02/T1')\
+                        .filterBounds(region)\
+                        .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
+                
+                image = collection.median()
+                image = image.select(['B2','B3','B4','B5'])
+                image = image.reproject('EPSG:4326', None, 30)
+
+            elif self.satelite == 'Sentinel-2_SR':
                 collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\
                         .filterBounds(region) \
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
