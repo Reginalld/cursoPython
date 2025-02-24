@@ -75,7 +75,8 @@ class SentinelImageSearch:
             thermal_bands, None, True
         )
     
-    def mask_l8_clouds(self,image):
+        
+    def mask_landsat_clouds(self,image):
         """Masks clouds in a Landsat 8 image using the QA_PIXEL band.
         
         Args:
@@ -87,15 +88,15 @@ class SentinelImageSearch:
         qa = image.select('QA_PIXEL')
         
         # Bits de interesse na QA_PIXEL
-        cloud_bit = 1 << 3  # Indica a presença de nuvens
-        cloud_shadow_bit = 1 << 4  # Indica a presença de sombras de nuvem
+        cloud_bit = 1 << 5  # Indica a presença de nuvens
+        cloud_shadow_bit = 1 << 3  # Indica a presença de sombras de nuvem
 
         # Criação da máscara (onde os bits de nuvem e sombra são 0, ou seja, sem nuvens)
-        mask = qa.bitwiseAnd(cloud_bit).eq(0).And(qa.bitwiseAnd(cloud_shadow_bit).eq(0))
+        mask = qa.bitwiseAnd(cloud_shadow_bit).eq(0).And(qa.bitwiseAnd(cloud_bit).eq(0))
 
         # Aplica a máscara e mantém apenas os pixels válidos
         return image.updateMask(mask)
-        
+    
     def get_sentinel_image(self):
         # Obtém imagens para uma área específica com um raio definido
         try:
@@ -106,25 +107,19 @@ class SentinelImageSearch:
             if self.satelite == 'Landsat8_T1_L2':
                 collection = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')\
                     .filterBounds(region)\
-                    .filterDate(ee.Date(self.start_date), ee.Date(self.end_date))
+                    .filterDate(ee.Date(self.start_date), ee.Date(self.end_date))\
+                    .map(self.mask_landsat_clouds)
 
-                # Aplicando a máscara de nuvens
-                collection = collection.map(self.mask_l8_clouds)
-
-                # Aplicando a mediana e os fatores de escala
                 image = collection.median()
                 image = self.apply_scale_factors(image)
-
-                # Selecionando as bandas desejadas
                 image = image.select(['SR_B4', 'SR_B3', 'SR_B2', 'SR_B5'])
-
-                # Reprojetando
                 image = image.reproject('EPSG:4326', None, 30)
 
             elif self.satelite == 'Landsat8_T1_TOA':
                 collection = ee.ImageCollection('LANDSAT/LC08/C02/T1_TOA')\
                         .filterBounds(region)\
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
+                        .map(self.mask_landsat_clouds)
 
                 image = collection.median()
                 image = image.select(['B2','B3','B4','B5'])
@@ -134,7 +129,29 @@ class SentinelImageSearch:
                 collection = ee.ImageCollection('LANDSAT/LC08/C02/T1')\
                         .filterBounds(region)\
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
+                        .map(self.mask_landsat_clouds)
                         
+                image = collection.median()
+                image = image.select(['B2','B3','B4','B5'])
+                image = image.reproject('EPSG:4326', None, 30)
+
+            elif self.satelite == 'Landsat9_T1_L2':
+                collection = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')\
+                        .filterBounds(region)\
+                        .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
+                        .map(self.mask_landsat_clouds)
+                
+                image = collection.median()
+                image = self.apply_scale_factors(image)
+                image = image.select(['SR_B2','SR_B3','SR_B4','SR_B5'])
+                image = image.reproject('EPSG:4326', None, 30)
+
+            elif self.satelite == 'Landsat9_T1_TOA':
+                collection = ee.ImageCollection('LANDSAT/LC09/C02/T1_TOA')\
+                        .filterBounds(region)\
+                        .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
+                        .map(self.mask_l8_clouds)
+                
                 image = collection.median()
                 image = image.select(['B2','B3','B4','B5'])
                 image = image.reproject('EPSG:4326', None, 30)
@@ -143,6 +160,7 @@ class SentinelImageSearch:
                 collection = ee.ImageCollection('LANDSAT/LC09/C02/T1')\
                         .filterBounds(region)\
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
+                        .map(self.mask_landsat_clouds)
                 
                 image = collection.median()
                 image = image.select(['B2','B3','B4','B5'])
