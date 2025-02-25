@@ -1,0 +1,6 @@
+typer
+geemap
+earthengine-api
+numpy
+pandas
+geedim
