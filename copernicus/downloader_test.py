@@ -65,29 +65,54 @@ class SatelliteImageFetcher:
     def fetch_image(self, satelite, bounding_box, start_date, end_date):
         try:
             logging.info(f"Buscando imagens do {satelite}...")
-            collection_params = {
-                "spatial_extent": bounding_box,
-                "temporal_extent": [start_date, end_date],
-            }
 
             if satelite == 'SENTINEL2_L2A':
-                collection_params.update({"bands": ["B02", "B03", "B04", "B08"], "max_cloud_cover": 20})
-                image = self.connection.load_collection("SENTINEL2_L2A", **collection_params)
+                # Carregar a coleção
+                image = self.connection.load_collection(
+                    "SENTINEL2_L2A",
+                    spatial_extent=bounding_box,
+                    temporal_extent=[start_date, end_date],
+                    bands=["B02", "B03", "B04", "B08"],
+                    max_cloud_cover=20,
+                )
+
+                image = image.resample_spatial(resolution=10)
                 image = image.reduce_dimension(dimension='t', reducer='median')
 
+
             elif satelite == 'SENTINEL2_L1C':
-                collection_params.update({"bands": ["B02", "B03", "B04", "B08"], "max_cloud_cover": 20})
-                image = self.connection.load_collection("SENTINEL2_L1C", **collection_params)
+                image = self.connection.load_collection(
+                    "SENTINEL2_L2A",
+                    spatial_extent=bounding_box,
+                    temporal_extent = [start_date, end_date],
+                    bands=["B02", "B03", "B04", "B08"],
+                    max_cloud_cover=20,
+
+                )
+                image = image.resample_spatial(resolution=10) 
                 image = image.reduce_dimension(dimension='t', reducer='median')
 
             elif satelite == 'SENTINEL1_GRD':
-                collection_params.update({"bands": ["VV", "VH"]})
-                image = self.connection.load_collection("SENTINEL1_GRD", **collection_params)
-                image = image.sar_backscatter(coefficient='sigma0-ellipsoid')
+                image = self.connection.load_collection(
+                    "SENTINEL1_GRD",
+                    spatial_extent=bounding_box,
+                    temporal_extent = [start_date,end_date],
+                    bands = ["VV","VH"]
+                )
+                image = image.sar_backscatter(
+                    coefficient = 'sigma0-ellipsoid'
+                )
 
             elif satelite == 'LANDSAT8_L2':
-                collection_params.update({"bands": ["SR_B2", "SR_B3", "SR_B4", "SR_B5"], "max_cloud_cover": 20})
-                image = self.connection.load_collection("LANDSAT8_L2", **collection_params)
+                image = self.connection.load_collection(
+                    "LANDSAT8_L2",
+                    spatial_extent=bounding_box,
+                    temporal_extent=[start_date, end_date],
+                    bands=["B02", "B03", "B04", "B05"],
+                    max_cloud_cover=20,
+                )
+                image = image.resample_spatial(resolution=30)
+                image = image.reduce_dimension(dimension='t', reducer='median')
 
             else:
                 logging.warning(f"Satélite {satelite} não suportado!")
@@ -107,26 +132,12 @@ class ImageDownloader:
                 logging.error("Tentativa de download com imagem inválida")
                 raise ValueError("Imagem inválida.")
             
-                  # job = image.create_job(title=filename, description="Download via bach job")
-        # job.start()
-        # logging.info(f"Job {job.job_id}.")
-
-        # while True:
-        #     status = job.status()
-        #     logging.info(f"Status do job {job.job_id}: {status}")
-        #     if status == 'finished':
-        #         logging.info(f"Job {job.job_id} concluído. Iniciando download...")
-        #         results = job.get_results()
-        #         results.download_file(filepath)
-        #         break
-        #     elif status in ['error', 'canceled']:
-        #         raise RuntimeError(f'Job {job.job_id} falhou com status: {status}')
-        #     else:
-        #         time.sleep(20)
-
             filepath = os.path.join(output_dir, filename)
             logging.info(f"Iniciando download da imagem para {filepath}...")
-            image.download(filepath)
+            job = image.execute_batch(filepath)
+            # job.download_files(filepath)
+            # results = job.get_results()
+            # results.download(filepath)
             return filepath
 
         except Exception as e:
