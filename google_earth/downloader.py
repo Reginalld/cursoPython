@@ -8,7 +8,7 @@ logging.basicConfig(
     level=logging.INFO,  # Pode ser DEBUG, INFO, WARNING, ERROR
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("sentinel_log.txt"),  # Salva em arquivo
+        logging.FileHandler("google_earth\\log\\google_earth_log.txt"),  # Salva em arquivo
         logging.StreamHandler()  # Exibe no console
     ]
 )
@@ -34,8 +34,47 @@ class GEEManager:
         except Exception as e:
             logging.critical(f"Erro ao inicializar o GEE: {e}", exc_info=True)
             raise RuntimeError(f"Erro ao inicializar o GEE: {e}")
+        
+class ImageFilters:
+    @staticmethod
+    def mask_s2_clouds(image):
+        """Mascarar nuvens em uma imagem Sentinel-2 usando a banda QA60."""
+        qa = image.select('QA60')
+        cloud_bit_mask = 1 << 10
+        cirrus_bit_mask = 1 << 11
+        mask = (
+            qa.bitwiseAnd(cloud_bit_mask)
+            .eq(0)
+            .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+        )
+        return image.updateMask(mask).divide(10000)
 
-class SentinelImageSearch:
+    @staticmethod
+    def mask_s1_edges(image):
+        """Mascara bordas de imagens Sentinel-1."""
+        edge = image.lt(-30.0)
+        masked_image = image.mask().And(edge.Not())
+        return image.updateMask(masked_image)
+
+    @staticmethod
+    def apply_scale_factors(image):
+        """Aplica fatores de escala para imagens Landsat."""
+        optical_bands = image.select('SR_B.*').multiply(0.0000275).add(-0.2)
+        thermal_bands = image.select('ST_B.*').multiply(0.00341802).add(149.0)
+        return image.addBands(optical_bands, None, True).addBands(
+            thermal_bands, None, True
+        )
+
+    @staticmethod
+    def mask_landsat_clouds(image):
+        """Mascarar nuvens em uma imagem Landsat usando a banda QA_PIXEL."""
+        qa = image.select('QA_PIXEL')
+        cloud_bit = 1 << 5
+        cloud_shadow_bit = 1 << 3
+        mask = qa.bitwiseAnd(cloud_shadow_bit).eq(0).And(qa.bitwiseAnd(cloud_bit).eq(0))
+        return image.updateMask(mask)
+
+class ImageSearch:
     def __init__(self,satelite: str, lat: float, lon: float, radius_km: float, start_date: str, end_date: str):
         self.satelite = satelite
         self.lat = lat
@@ -44,60 +83,8 @@ class SentinelImageSearch:
         self.start_date = start_date
         self.end_date = end_date
 
-    def mask_s2_clouds(self,image):
-        """Masks clouds in a Sentinel-2 image using the QA band.
-        Args:
-            image (ee.Image): A Sentinel-2 image.
-        Returns:
-            ee.Image: A cloud-masked Sentinel-2 image.
-        """
-        qa = image.select('QA60')
-        # Bits 10 and 11 are clouds and cirrus, respectively.
-        cloud_bit_mask = 1 << 10
-        cirrus_bit_mask = 1 << 11
-        # Both flags should be set to zero, indicating clear conditions.
-        mask = (
-            qa.bitwiseAnd(cloud_bit_mask)
-            .eq(0)
-            .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-        )
-        return image.updateMask(mask).divide(10000)
-
-    def mask_s1_edges(self,image):
-        edge = image.lt(-30.0)
-        masked_image = image.mask().And(edge.Not())
-        return image.updateMask(masked_image)
     
-    def apply_scale_factors(self,image):
-        optical_bands = image.select('SR_B.*').multiply(0.0000275).add(-0.2)
-        thermal_bands = image.select('ST_B.*').multiply(0.00341802).add(149.0)
-        return image.addBands(optical_bands, None, True).addBands(
-            thermal_bands, None, True
-        )
-    
-        
-    def mask_landsat_clouds(self,image):
-        """Masks clouds in a Landsat 8 image using the QA_PIXEL band.
-        
-        Args:
-            image (ee.Image): A Landsat 8 image.
-        
-        Returns:
-            ee.Image: A cloud-masked Landsat 8 image.
-        """
-        qa = image.select('QA_PIXEL')
-        
-        # Bits de interesse na QA_PIXEL
-        cloud_bit = 1 << 5  # Indica a presença de nuvens
-        cloud_shadow_bit = 1 << 3  # Indica a presença de sombras de nuvem
-
-        # Criação da máscara (onde os bits de nuvem e sombra são 0, ou seja, sem nuvens)
-        mask = qa.bitwiseAnd(cloud_shadow_bit).eq(0).And(qa.bitwiseAnd(cloud_bit).eq(0))
-
-        # Aplica a máscara e mantém apenas os pixels válidos
-        return image.updateMask(mask)
-    
-    def get_sentinel_image(self):
+    def get_image(self):
         # Obtém imagens para uma área específica com um raio definido
         try:
             logging.info(f"Buscando imagens do {self.satelite} para ({self.lat}, {self.lon}) com raio de {self.radius_km} km...")
@@ -108,10 +95,10 @@ class SentinelImageSearch:
                 collection = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')\
                     .filterBounds(region)\
                     .filterDate(ee.Date(self.start_date), ee.Date(self.end_date))\
-                    .map(self.mask_landsat_clouds)
+                    .map(ImageFilters.mask_landsat_clouds)
 
                 image = collection.median()
-                image = self.apply_scale_factors(image)
+                image = ImageFilters.apply_scale_factors(image)
                 image = image.select(['SR_B4', 'SR_B3', 'SR_B2', 'SR_B5'])
                 image = image.reproject('EPSG:4326', None, 30)
 
@@ -119,7 +106,7 @@ class SentinelImageSearch:
                 collection = ee.ImageCollection('LANDSAT/LC08/C02/T1_TOA')\
                         .filterBounds(region)\
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
-                        .map(self.mask_landsat_clouds)
+                        .map(ImageFilters.mask_landsat_clouds)
 
                 image = collection.median()
                 image = image.select(['B2','B3','B4','B5'])
@@ -129,7 +116,7 @@ class SentinelImageSearch:
                 collection = ee.ImageCollection('LANDSAT/LC08/C02/T1')\
                         .filterBounds(region)\
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
-                        .map(self.mask_landsat_clouds)
+                        .map(ImageFilters.mask_landsat_clouds)
                         
                 image = collection.median()
                 image = image.select(['B2','B3','B4','B5'])
@@ -139,10 +126,10 @@ class SentinelImageSearch:
                 collection = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')\
                         .filterBounds(region)\
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
-                        .map(self.mask_landsat_clouds)
+                        .map(ImageFilters.mask_landsat_clouds)
                 
                 image = collection.median()
-                image = self.apply_scale_factors(image)
+                image = ImageFilters.apply_scale_factors(image)
                 image = image.select(['SR_B2','SR_B3','SR_B4','SR_B5'])
                 image = image.reproject('EPSG:4326', None, 30)
 
@@ -150,7 +137,7 @@ class SentinelImageSearch:
                 collection = ee.ImageCollection('LANDSAT/LC09/C02/T1_TOA')\
                         .filterBounds(region)\
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
-                        .map(self.mask_l8_clouds)
+                        .map(ImageFilters.mask_l8_clouds)
                 
                 image = collection.median()
                 image = image.select(['B2','B3','B4','B5'])
@@ -160,7 +147,7 @@ class SentinelImageSearch:
                 collection = ee.ImageCollection('LANDSAT/LC09/C02/T1')\
                         .filterBounds(region)\
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
-                        .map(self.mask_landsat_clouds)
+                        .map(ImageFilters.mask_landsat_clouds)
                 
                 image = collection.median()
                 image = image.select(['B2','B3','B4','B5'])
@@ -172,7 +159,7 @@ class SentinelImageSearch:
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
                         .sort('CLOUDY_PIXEL_PERCENTAGE') \
                         .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20)) \
-                        .map(self.mask_s2_clouds)
+                        .map(ImageFilters.mask_s2_clouds)
                 
                 image = collection.median()
                 image = image.select(['B4', 'B3', 'B2', 'B8'])
@@ -183,7 +170,7 @@ class SentinelImageSearch:
                         .filterBounds(region)\
                         .filterDate(ee.Date(self.start_date),ee.Date(self.end_date))\
                         .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20))\
-                        .map(self.mask_s2_clouds)
+                        .map(ImageFilters.mask_s2_clouds)
                 
                 image = collection.median()
                 image = image.select(['B4', 'B3', 'B2', 'B8'])
@@ -196,7 +183,7 @@ class SentinelImageSearch:
                     .filterDate(ee.Date(self.start_date), ee.Date(self.end_date))\
                     .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))\
                     .filter(ee.Filter.eq('instrumentMode', 'IW'))\
-                    .map(self.mask_s1_edges)
+                    .map(ImageFilters.mask_s1_edges)
                 
                 image = collection.qualityMosaic('VV')
                 image = image.reproject('EPSG:4326', None, 10) 
@@ -266,8 +253,8 @@ def main(
     #Inicializando o GEE
     gee_manager = GEEManager(service_account, key_path,project)
 
-    downloader = SentinelImageSearch(satelite, lat, lon, radius_km, start_date, end_date)
-    image, region = downloader.get_sentinel_image()
+    downloader = ImageSearch(satelite, lat, lon, radius_km, start_date, end_date)
+    image, region = downloader.get_image()
         
     if image:
         image_downloader = ImageDownloader(output_dir)
@@ -275,7 +262,6 @@ def main(
         image_downloader.download_image(image, region, filename)
     else:
         logging.warning("Nenhuma imagem encontrada")
-            
 
 if __name__ == "__main__":
     app()
