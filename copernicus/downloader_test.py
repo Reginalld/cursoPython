@@ -36,13 +36,6 @@ class CopernicusConnection:
         return self.connection
 
 
-class DirectoryManager:
-    @staticmethod
-    def create_output(output_dir):
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-
-
 class BoundingBoxCalculator:
     @staticmethod
     def calcular(lat, lon, raio_km):
@@ -125,24 +118,31 @@ class SatelliteImageFetcher:
 
 
 class ImageDownloader:
-    @staticmethod
-    def download(image, output_dir, filename):
+    def __init__(self,output_dir):
+        self.output_dir = output_dir
+        self.create_output()
+
+    def create_output(self):
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir) 
+
+    def download(self,image, filename):
         try:
             if image is None:
                 logging.error("Tentativa de download com imagem inválida")
                 raise ValueError("Imagem inválida.")
             
-            filepath = os.path.join(output_dir, filename)
+            filepath = os.path.join(self.output_dir, filename)
             logging.info(f"Iniciando download da imagem para {filepath}...")
             job = image.execute_batch(filepath)
-            # job.download_files(filepath)
-            # results = job.get_results()
-            # results.download(filepath)
+            results = job.get_results()
+            results.download_file(filepath)
             return filepath
 
         except Exception as e:
             logging.error(f"Erro ao fazer download da imagem: {str(e)}")
             raise RuntimeError("Erro ao fazer download da imagem", e)
+
 
 
 app = typer.Typer()
@@ -164,7 +164,6 @@ def main(
     copernicus_conn.initialize()
 
     bounding_box = BoundingBoxCalculator.calcular(lat, lon, radius_km)
-    DirectoryManager.create_output(output_dir)
 
     fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
     image = fetcher.fetch_image(satelite, bounding_box, start_date, end_date)
@@ -174,7 +173,8 @@ def main(
         return
 
     filename = f'{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}.tif'
-    ImageDownloader.download(image, output_dir, filename)
+    image_downloader = ImageDownloader(output_dir)
+    image_downloader.download(image, filename)
 
 
 if __name__ == "__main__":
