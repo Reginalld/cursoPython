@@ -9,7 +9,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("log/copernicus_log.txt"),
+        logging.FileHandler("docker_copernicus\\log\\copernicus_log.txt"),
         logging.StreamHandler()
     ]
 )
@@ -95,17 +95,6 @@ class SatelliteImageFetcher:
                     coefficient = 'sigma0-ellipsoid'
                 )
 
-            elif satelite == 'LANDSAT8_L2':
-                image = self.connection.load_collection(
-                    "LANDSAT8_L2",
-                    spatial_extent=bounding_box,
-                    temporal_extent=[start_date, end_date],
-                    bands=["B02", "B03", "B04", "B05"],
-                    max_cloud_cover=20,
-                )
-                image = image.resample_spatial(resolution=30)
-                image = image.reduce_dimension(dimension='t', reducer='median')
-
             else:
                 logging.warning(f"Satélite {satelite} não suportado!")
                 raise ValueError("Satélite não suportado.")
@@ -136,6 +125,7 @@ class ImageDownloader:
             job = image.execute_batch(filepath)
             results = job.get_results()
             results.download_file(filepath)
+            logging.info(f'Download concluído')
             return filepath
 
         except Exception as e:
@@ -148,7 +138,7 @@ app = typer.Typer()
 
 @app.command()
 def main(
-    satelite: str = typer.Argument(..., help="Escolha um satélite (SENTINEL2_L1C, SENTINEL2_L2A, SENTINEL1_GRD, LANDSAT8_L2)"),
+    satelite: str = typer.Argument(..., help="Escolha um satélite (SENTINEL2_L1C, SENTINEL2_L2A, SENTINEL1_GRD)"),
     lat: float = typer.Argument(..., help="Latitude da área de interesse"),
     lon: float = typer.Argument(..., help="Longitude da área de interesse"),
     radius_km: float = typer.Argument(10.0, help="Raio da área de interesse em km"),
@@ -156,7 +146,7 @@ def main(
     end_date: str = typer.Argument(..., help="Data final (YYYY-MM-DD)"),
     client_id: str = typer.Option('sh-780be612-cdd5-46c2-be80-016e3d9e3941', help="Client ID da conta Copernicus"),
     client_secret: str = typer.Option('wNqrCLhYnogycEclvClgVfrCRzNxjzec', help="Client Secret da conta Copernicus"),
-    output_dir: str = typer.Option("imagens", help="Diretório de saída para salvar as imagens"),
+    output_dir: str = typer.Option("docker_copernicus\\imagens", help="Diretório de saída para salvar as imagens"),
 ):
     copernicus_conn = CopernicusConnection(client_id, client_secret)
     copernicus_conn.initialize()
