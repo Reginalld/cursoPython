@@ -9,7 +9,7 @@ logging.basicConfig(
     level=logging.INFO,  # Pode ser DEBUG, INFO, WARNING, ERROR
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("log/google_download_log.txt"),  # Salva em arquivo
+        logging.FileHandler("docker_google\\log\\google_download_log.txt"),  # Salva em arquivo
         logging.StreamHandler()  # Exibe no console
     ]
 )
@@ -246,9 +246,9 @@ def main(
     start_date: str = typer.Argument(..., help="Data de início da área de interesse",show_default=True),
     end_date: str = typer.Argument(..., help="Data final da área de interesse",show_default=True),
     service_account: str = typer.Option("teste-api-key@sunlit-flag-449511-f7.iam.gserviceaccount.com", help="Conta de serviço do GEE"),
-    key_path: str = typer.Option("key/api_key_test.json", help="Caminho para a chave JSON da conta de serviço"),
+    key_path: str = typer.Option("docker_google\\key\\api_key_test.json", help="Caminho para a chave JSON da conta de serviço"),
     project: str = typer.Option("ee-reginaldosg", help="Nome do projeto GEE"),
-    output_dir: str = typer.Option("imagens", help="Diretório de saída para salvar as imagens"),
+    output_dir: str = typer.Option("docker_google\\imagens", help="Diretório de saída para salvar as imagens"),
 ):
     
     #Inicializando o GEE
