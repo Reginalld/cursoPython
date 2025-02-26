@@ -148,7 +148,7 @@ app = typer.Typer()
 
 @app.command()
 def main(
-    satelite: str = typer.Argument(..., help="Escolha um satélite (SENTINEL2_L1C, SENTINEL2_L2A, SENTINEL1_GRD)"),
+    satelite: str = typer.Argument(..., help="Escolha um satélite (SENTINEL2_L1C, SENTINEL2_L2A, SENTINEL1_GRD, LANDSAT8_L2)"),
     lat: float = typer.Argument(..., help="Latitude da área de interesse"),
     lon: float = typer.Argument(..., help="Longitude da área de interesse"),
     radius_km: float = typer.Argument(10.0, help="Raio da área de interesse em km"),
