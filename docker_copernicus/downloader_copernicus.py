@@ -124,19 +124,24 @@ class ImageDownloader:
             
             filepath = os.path.join(self.output_dir, filename)
             logging.info(f"Iniciando download da imagem para {filepath}...")
-            job = image.execute_batch(filepath)
-            results = job.get_results()
-            results.download_file(filepath)
+            image.download(filepath)
+            # job = image.execute_batch(filepath)
+            # results = job.get_results()
+            # results.download_file(filepath)
             logging.info(f'Download concluído')
             return filepath
 
         except Exception as e:
             logging.error(f"Erro ao fazer download da imagem: {str(e)}")
             raise RuntimeError("Erro ao fazer download da imagem", e)
-def divide_bbox(bbox, tile_size_km, center_lat):
+        
+def divide_bbox(bbox, tile_size_km, center_lat,raio_condicional):
 
     radius_km = ((bbox['north'] - bbox['south']) * 111) / 2
-    desired_divisions = 4
+    if raio_condicional >= 50:
+        desired_divisions = 4
+    else:
+        desired_divisions = 3
     effective_tile_size = max(tile_size_km, (2 * radius_km) / desired_divisions)
     
     delta_lat = effective_tile_size / 111.0
@@ -198,44 +203,52 @@ def main(
     client_id: str = typer.Option('sh-780be612-cdd5-46c2-be80-016e3d9e3941', help="Client ID da conta Copernicus"),
     client_secret: str = typer.Option('wNqrCLhYnogycEclvClgVfrCRzNxjzec', help="Client Secret da conta Copernicus"),
     output_dir: str = typer.Option("docker_copernicus\\imagens", help="Diretório de saída para salvar as imagens"),
-    tile_size_km: float = typer.Option(10.0)
+    tile_size_km: float = typer.Option(18.0)
 ):
     copernicus_conn = CopernicusConnection(client_id, client_secret)
     copernicus_conn.initialize()
 
     main_bbox = BoundingBoxCalculator.calcular(lat, lon, radius_km)
     logging.info(f"BBox principal: {main_bbox}")
+    if radius_km >=21:
+        tiles = divide_bbox(main_bbox, tile_size_km, lat,radius_km)
+        logging.info(f"Área dividida em {len(tiles)} lotes")
 
-    tiles = divide_bbox(main_bbox, tile_size_km, lat)
-    logging.info(f"Área dividida em {len(tiles)} lotes")
+        fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
+        temp_files = []
+        tile_dir = os.path.join(output_dir, "tiles")
+        if not os.path.exists(tile_dir):
+            os.makedirs(tile_dir)
 
-    fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
-    temp_files = []
-    tile_dir = os.path.join(output_dir, "tiles")
-    if not os.path.exists(tile_dir):
-        os.makedirs(tile_dir)
+        for idx, tile_bbox in enumerate(tiles):
+            logging.info(f"Baixando lote {idx+1}/{len(tiles)} com bbox: {tile_bbox}")
+            image = fetcher.fetch_image(satelite, tile_bbox, start_date, end_date)
+            if image is None:
+                logging.warning(f"Nenhuma imagem para o lote {idx+1}")
+                continue
+            tile_filename = f"{satelite}_tile_{idx+1}_{radius_km}_{start_date}_{end_date}.tif"
+            try:
+                ImageDownloader(tile_dir).download(image, tile_filename)
+                temp_files.append(os.path.join(tile_dir, tile_filename))
+            except Exception as e:
+                logging.error(f"Erro ao baixar o lote {idx+1}: {e}")
 
-    for idx, tile_bbox in enumerate(tiles):
-        logging.info(f"Baixando lote {idx+1}/{len(tiles)} com bbox: {tile_bbox}")
-        image = fetcher.fetch_image(satelite, tile_bbox, start_date, end_date)
+        if not temp_files:
+            logging.error("Nenhum lote foi baixado com sucesso.")
+            return
+
+        final_filename = f"{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}_mosaic.tif"
+        final_filepath = os.path.join(output_dir, final_filename)
+        mosaic_tiles(temp_files, final_filepath)
+        logging.info(f"Mosaico final criado em: {final_filepath}")
+    else:
+        fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
+        image = fetcher.fetch_image(satelite, main_bbox, start_date, end_date)
         if image is None:
-            logging.warning(f"Nenhuma imagem para o lote {idx+1}")
-            continue
-        tile_filename = f"{satelite}_tile_{idx+1}.tif"
-        try:
-            ImageDownloader(tile_dir).download(image, tile_filename)
-            temp_files.append(os.path.join(tile_dir, tile_filename))
-        except Exception as e:
-            logging.error(f"Erro ao baixar o lote {idx+1}: {e}")
-
-    if not temp_files:
-        logging.error("Nenhum lote foi baixado com sucesso.")
-        return
-
-    final_filename = f"{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}_mosaic.tif"
-    final_filepath = os.path.join(output_dir, final_filename)
-    mosaic_tiles(temp_files, final_filepath)
-    logging.info(f"Mosaico final criado em: {final_filepath}")
+            logging.warning('Nenhuma imagem encontrada')
+        filename = f'{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}.tif'
+        image_downloader = ImageDownloader(output_dir)
+        image_downloader.download(image, filename)
 
 
 if __name__ == "__main__":
