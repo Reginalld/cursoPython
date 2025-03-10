@@ -3,6 +3,8 @@ import math
 import logging
 import os
 import typer
+import rasterio
+from rasterio.merge import merge
 
 
 logging.basicConfig(
@@ -131,6 +133,55 @@ class ImageDownloader:
         except Exception as e:
             logging.error(f"Erro ao fazer download da imagem: {str(e)}")
             raise RuntimeError("Erro ao fazer download da imagem", e)
+def divide_bbox(bbox, tile_size_km, center_lat):
+
+    radius_km = ((bbox['north'] - bbox['south']) * 111) / 2
+    desired_divisions = 4
+    effective_tile_size = max(tile_size_km, (2 * radius_km) / desired_divisions)
+    
+    delta_lat = effective_tile_size / 111.0
+    delta_lon = effective_tile_size / (111.0 * math.cos(math.radians(center_lat)))
+    
+    bboxes = []
+    current_lat = bbox['south']
+    while current_lat < bbox['north']:
+        current_lon = bbox['west']
+        while current_lon < bbox['east']:
+            sub_bbox = {
+                'west': current_lon,
+                'south': current_lat,
+                'east': min(current_lon + delta_lon, bbox['east']),
+                'north': min(current_lat + delta_lat, bbox['north']),
+                'crs': 'EPSG:4326'
+            }
+            bboxes.append(sub_bbox)
+            current_lon += delta_lon
+        current_lat += delta_lat
+    return bboxes
+
+def mosaic_tiles(tile_files, output_path):
+
+    src_files = []
+    for fp in tile_files:
+        src = rasterio.open(fp)
+        src_files.append(src)
+    mosaic, out_trans = merge(src_files)
+
+    out_meta = src_files[0].meta.copy()
+    out_meta.update({
+        "driver": "GTiff",
+        "height": mosaic.shape[1],
+        "width": mosaic.shape[2],
+        "transform": out_trans
+    })
+
+    with rasterio.open(output_path, "w", **out_meta) as dest:
+        dest.write(mosaic)
+
+    for src in src_files:
+        src.close()
+
+    return output_path
 
 
 app = typer.Typer()
@@ -147,22 +198,44 @@ def main(
     client_id: str = typer.Option('sh-780be612-cdd5-46c2-be80-016e3d9e3941', help="Client ID da conta Copernicus"),
     client_secret: str = typer.Option('wNqrCLhYnogycEclvClgVfrCRzNxjzec', help="Client Secret da conta Copernicus"),
     output_dir: str = typer.Option("docker_copernicus\\imagens", help="Diretório de saída para salvar as imagens"),
+    tile_size_km: float = typer.Option(10.0)
 ):
     copernicus_conn = CopernicusConnection(client_id, client_secret)
     copernicus_conn.initialize()
 
-    bounding_box = BoundingBoxCalculator.calcular(lat, lon, radius_km)
+    main_bbox = BoundingBoxCalculator.calcular(lat, lon, radius_km)
+    logging.info(f"BBox principal: {main_bbox}")
+
+    tiles = divide_bbox(main_bbox, tile_size_km, lat)
+    logging.info(f"Área dividida em {len(tiles)} lotes")
 
     fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
-    image = fetcher.fetch_image(satelite, bounding_box, start_date, end_date)
+    temp_files = []
+    tile_dir = os.path.join(output_dir, "tiles")
+    if not os.path.exists(tile_dir):
+        os.makedirs(tile_dir)
 
-    if image is None:
-        logging.warning('Nenhuma imagem encontrada')
+    for idx, tile_bbox in enumerate(tiles):
+        logging.info(f"Baixando lote {idx+1}/{len(tiles)} com bbox: {tile_bbox}")
+        image = fetcher.fetch_image(satelite, tile_bbox, start_date, end_date)
+        if image is None:
+            logging.warning(f"Nenhuma imagem para o lote {idx+1}")
+            continue
+        tile_filename = f"{satelite}_tile_{idx+1}.tif"
+        try:
+            ImageDownloader(tile_dir).download(image, tile_filename)
+            temp_files.append(os.path.join(tile_dir, tile_filename))
+        except Exception as e:
+            logging.error(f"Erro ao baixar o lote {idx+1}: {e}")
+
+    if not temp_files:
+        logging.error("Nenhum lote foi baixado com sucesso.")
         return
 
-    filename = f'{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}.tif'
-    image_downloader = ImageDownloader(output_dir)
-    image_downloader.download(image, filename)
+    final_filename = f"{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}_mosaic.tif"
+    final_filepath = os.path.join(output_dir, final_filename)
+    mosaic_tiles(temp_files, final_filepath)
+    logging.info(f"Mosaico final criado em: {final_filepath}")
 
 
 if __name__ == "__main__":
