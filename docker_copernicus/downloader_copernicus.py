@@ -5,6 +5,8 @@ import os
 import typer
 import rasterio
 from rasterio.merge import merge
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 
 logging.basicConfig(
@@ -114,31 +116,54 @@ class ImageDownloader:
 
     def create_output(self):
         if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir) 
+            os.makedirs(self.output_dir, exist_ok=True) 
 
-    def download(self,image, filename):
+    def download(self, image, filename):
         try:
             if image is None:
                 logging.error("Tentativa de download com imagem inválida")
                 raise ValueError("Imagem inválida.")
             
+
             filepath = os.path.join(self.output_dir, filename)
+            logging.info(f"filepath calculado: {filepath}")
+            os.makedirs(os.path.dirname(filepath), exist_ok=True) 
             logging.info(f"Iniciando download da imagem para {filepath}...")
             image.download(filepath)
-            # job = image.execute_batch(filepath)
-            # results = job.get_results()
-            # results.download_file(filepath)
             logging.info(f'Download concluído')
             return filepath
-
         except Exception as e:
             logging.error(f"Erro ao fazer download da imagem: {str(e)}")
             raise RuntimeError("Erro ao fazer download da imagem", e)
         
+    def download_async(self,image_list,filenames):
+        def process_download(image, filename, index):
+            # Adiciona um delay apenas para o segundo download (índice 1)
+            if index == 1:
+                logging.info("Aplicando delay para evitar Too Many Requests...")
+                time.sleep(5)  # Delay de 5 segundos antes do segundo download
+            return self.download(image, filename)
+
+        # Mantém o número máximo de threads simultâneas como 2
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = []
+            for idx, (img, fname) in enumerate(zip(image_list, filenames)):
+                future = executor.submit(process_download, img, fname, idx)
+                futures.append(future)
+
+            # Verificação dos resultados do download
+            for future in futures:
+                try:
+                    future.result()
+                except Exception as e:
+                    logging.error(f"Erro no download assíncrono: {e}")
+        
 def divide_bbox(bbox, tile_size_km, center_lat,raio_condicional):
 
     radius_km = ((bbox['north'] - bbox['south']) * 111) / 2
-    if raio_condicional >= 50:
+    if raio_condicional >= 80:
+        desired_divisions = 5
+    elif raio_condicional >= 50 & raio_condicional <= 79:
         desired_divisions = 4
     else:
         desired_divisions = 3
@@ -203,53 +228,78 @@ def main(
     client_id: str = typer.Option('sh-780be612-cdd5-46c2-be80-016e3d9e3941', help="Client ID da conta Copernicus"),
     client_secret: str = typer.Option('wNqrCLhYnogycEclvClgVfrCRzNxjzec', help="Client Secret da conta Copernicus"),
     output_dir: str = typer.Option("docker_copernicus\\imagens", help="Diretório de saída para salvar as imagens"),
-    tile_size_km: float = typer.Option(18.0)
+    tile_size_km: float = typer.Option(16.0)
 ):
     copernicus_conn = CopernicusConnection(client_id, client_secret)
     copernicus_conn.initialize()
 
     main_bbox = BoundingBoxCalculator.calcular(lat, lon, radius_km)
     logging.info(f"BBox principal: {main_bbox}")
-    if radius_km >=21:
-        tiles = divide_bbox(main_bbox, tile_size_km, lat,radius_km)
+
+    fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
+    image_downloader = ImageDownloader(output_dir)
+    if radius_km >= 21:
+        tiles = divide_bbox(main_bbox, tile_size_km, lat, radius_km)
         logging.info(f"Área dividida em {len(tiles)} lotes")
 
-        fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
         temp_files = []
-        tile_dir = os.path.join(output_dir, "tiles")
+        tile_dir = os.path.join(output_dir, "tiles")  # docker_copernicus\imagens\tiles
+        tile_dir = os.path.abspath(tile_dir)  # Converte para caminho absoluto
+        logging.info(f"Diretório de tiles (absoluto): {tile_dir}")
         if not os.path.exists(tile_dir):
-            os.makedirs(tile_dir)
+            os.makedirs(tile_dir, exist_ok=True)
+            logging.info(f"Diretório {tile_dir} criado com sucesso")
+
+        image_downloader = ImageDownloader(tile_dir)  # Usa tile_dir como output_dir
+        images = []
+        filenames = []
 
         for idx, tile_bbox in enumerate(tiles):
-            logging.info(f"Baixando lote {idx+1}/{len(tiles)} com bbox: {tile_bbox}")
+            logging.info(f"Lote {idx+1}/{len(tiles)} selecionado para fila de download com bbox: {tile_bbox}")
             image = fetcher.fetch_image(satelite, tile_bbox, start_date, end_date)
             if image is None:
                 logging.warning(f"Nenhuma imagem para o lote {idx+1}")
                 continue
-            tile_filename = f"{satelite}_tile_{idx+1}_{radius_km}_{start_date}_{end_date}.tif"
-            try:
-                ImageDownloader(tile_dir).download(image, tile_filename)
-                temp_files.append(os.path.join(tile_dir, tile_filename))
-            except Exception as e:
-                logging.error(f"Erro ao baixar o lote {idx+1}: {e}")
 
-        if not temp_files:
+            tile_filename = f"{satelite}_tile_{idx+1}_{radius_km}_{start_date}_{end_date}.tif"
+            logging.info(f"Nome do arquivo para o tile {idx+1}: {tile_filename}")
+            tile_filepath = os.path.join(tile_dir, tile_filename)  # Caminho completo apenas para temp_files
+            images.append(image)
+            filenames.append(tile_filename)  # Apenas o nome do arquivo para download_async
+
+        if images:
+            logging.info(f"Lista de filenames para download: {filenames}")
+            image_downloader.download_async(images, filenames)
+            temp_files.extend([os.path.join(tile_dir, fname) for fname in filenames])
+            logging.info(f"Lista de temp_files após download: {temp_files}")
+        else:
             logging.error("Nenhum lote foi baixado com sucesso.")
             return
 
+        # Verificação de quais arquivos foram baixados
+        for filename in temp_files:
+            if os.path.exists(filename):
+                logging.info(f"Arquivo baixado com sucesso: {filename}")
+            else:
+                logging.error(f"Erro: arquivo {filename} não foi encontrado após o download")
+
+        # Filtragem de arquivos que existem
+        temp_files = [f for f in temp_files if os.path.exists(f)]
+
+        # Cria o mosaico apenas se houver arquivos válidos
         final_filename = f"{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}_mosaic.tif"
         final_filepath = os.path.join(output_dir, final_filename)
-        mosaic_tiles(temp_files, final_filepath)
-        logging.info(f"Mosaico final criado em: {final_filepath}")
+        if temp_files:
+            mosaic_tiles(temp_files, final_filepath)
+            logging.info(f"Mosaico final criado em: {final_filepath}")
+        else:
+            logging.error("Nenhum arquivo de tile foi baixado com sucesso. Mosaico não criado.")
     else:
-        fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
         image = fetcher.fetch_image(satelite, main_bbox, start_date, end_date)
         if image is None:
             logging.warning('Nenhuma imagem encontrada')
         filename = f'{satelite}_{lat}_{lon}_{radius_km}km_{start_date}_{end_date}.tif'
-        image_downloader = ImageDownloader(output_dir)
         image_downloader.download(image, filename)
-
 
 if __name__ == "__main__":
     app()
