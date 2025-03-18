@@ -7,6 +7,10 @@ import rasterio
 from rasterio.merge import merge
 from concurrent.futures import ThreadPoolExecutor
 import time
+import geopandas as gpd
+import re
+from shapely.wkt import loads
+import random
 
 
 logging.basicConfig(
@@ -68,7 +72,7 @@ class SatelliteImageFetcher:
                     "SENTINEL2_L2A",
                     spatial_extent=bounding_box,
                     temporal_extent=[start_date, end_date],
-                    bands=["B02", "B03", "B04", "B08"],
+                    bands=["B02", "B03", "B04"],
                     max_cloud_cover=20,
                 )
 
@@ -81,7 +85,7 @@ class SatelliteImageFetcher:
                     "SENTINEL2_L2A",
                     spatial_extent=bounding_box,
                     temporal_extent = [start_date, end_date],
-                    bands=["B02", "B03", "B04", "B08"],
+                    bands=["B02", "B03", "B04"],
                     max_cloud_cover=20,
 
                 )
@@ -137,18 +141,15 @@ class ImageDownloader:
             raise RuntimeError("Erro ao fazer download da imagem", e)
         
     def download_async(self,image_list,filenames):
-        def process_download(image, filename, index):
-            # Adiciona um delay apenas para o segundo download (índice 1)
-            if index == 1:
-                logging.info("Aplicando delay para evitar Too Many Requests...")
-                time.sleep(5)  # Delay de 5 segundos antes do segundo download
+        def process_download(image, filename):
+            time.sleep(30)
             return self.download(image, filename)
 
-        # Mantém o número máximo de threads simultâneas como 2
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for idx, (img, fname) in enumerate(zip(image_list, filenames)):
-                future = executor.submit(process_download, img, fname, idx)
+                time.sleep(5)
+                future = executor.submit(process_download, img, fname)
                 futures.append(future)
 
             # Verificação dos resultados do download
@@ -161,12 +162,16 @@ class ImageDownloader:
 def divide_bbox(bbox, tile_size_km, center_lat,raio_condicional):
 
     radius_km = ((bbox['north'] - bbox['south']) * 111) / 2
-    if raio_condicional >= 80:
+    if int(raio_condicional) >= 80:
         desired_divisions = 5
-    elif raio_condicional >= 50 & raio_condicional <= 79:
+    elif int(raio_condicional) >= 50 and int(raio_condicional) <= 79:
         desired_divisions = 4
+    # elif int(raio_condicional) >= 30 and int(raio_condicional) <= 49:
+    #     desired_divisions = 3
     else:
         desired_divisions = 3
+        logging.info('Entrei no if condicional')
+
     effective_tile_size = max(tile_size_km, (2 * radius_km) / desired_divisions)
     
     delta_lat = effective_tile_size / 111.0
@@ -192,8 +197,15 @@ def divide_bbox(bbox, tile_size_km, center_lat,raio_condicional):
 def mosaic_tiles(tile_files, output_path):
 
     src_files = []
+    band_count = None
     for fp in tile_files:
         src = rasterio.open(fp)
+        if band_count is None:
+            band_count = src.count
+        elif src.count != band_count:
+            logging.warning(f"Arquivo {fp} possui {src.count} bandas, diferente do esperado ({band_count}). Ignorando este arquivo.")
+            src.close()
+            continue
         src_files.append(src)
     mosaic, out_trans = merge(src_files)
 
@@ -220,20 +232,61 @@ app = typer.Typer()
 @app.command()
 def main(
     satelite: str = typer.Argument(..., help="Escolha um satélite (SENTINEL2_L1C, SENTINEL2_L2A, SENTINEL1_GRD)"),
-    lat: float = typer.Argument(..., help="Latitude da área de interesse"),
-    lon: float = typer.Argument(..., help="Longitude da área de interesse"),
-    radius_km: float = typer.Argument(10.0, help="Raio da área de interesse em km"),
+    lat: float = typer.Option(None, help="Latitude da área de interesse"),
+    lon: float = typer.Option(None, help="Longitude da área de interesse"),
+    tile_id: str = typer.Option(None, help="ID do tile Sentinel-2 (ex: '21KXP')"),
+    radius_km: float = typer.Option(10.0, help="Raio da área de interesse em km"),
     start_date: str = typer.Argument(..., help="Data de início (YYYY-MM-DD)"),
     end_date: str = typer.Argument(..., help="Data final (YYYY-MM-DD)"),
     client_id: str = typer.Option('sh-780be612-cdd5-46c2-be80-016e3d9e3941', help="Client ID da conta Copernicus"),
     client_secret: str = typer.Option('wNqrCLhYnogycEclvClgVfrCRzNxjzec', help="Client Secret da conta Copernicus"),
     output_dir: str = typer.Option("docker_copernicus\\imagens", help="Diretório de saída para salvar as imagens"),
-    tile_size_km: float = typer.Option(16.0)
+    tile_size_km: float = typer.Option(16.0),
+    tile_grid_path: str = typer.Option("docker_copernicus\\shapefile_ids\\grade_sentinel_brasil.shp")
 ):
     copernicus_conn = CopernicusConnection(client_id, client_secret)
     copernicus_conn.initialize()
 
-    main_bbox = BoundingBoxCalculator.calcular(lat, lon, radius_km)
+    lon_filename = 0.0
+    if tile_id:
+            logging.info(f"Buscando geometria para o tile {tile_id} na grade do Sentinel-2...")
+            tile_grid = gpd.read_file(tile_grid_path)
+            def clean_html(value):
+                return re.sub(r'<.*?>', "", str(value))
+            tile_grid = tile_grid.applymap(clean_html)
+            tile_grid = tile_grid[tile_grid["NAME"] == tile_id]
+            
+            if tile_grid.empty:
+                logging.error(f"Tile {tile_id} não encontrado na grade Sentinel-2.")
+                raise ValueError("Tile ID inválido.")
+            
+            tile_geometry = loads(tile_grid.geometry.iloc[0])
+            minx, miny, maxx, maxy = tile_geometry.bounds
+
+            main_bbox = {
+                "west": minx,
+                "south": miny,
+                "east": maxx,
+                "north": maxy,
+                "crs": "EPSG:4326"
+            }
+
+            lat = (maxy + miny) / 2  # Ponto central do tile
+            lon_filename = (maxx + minx) / 2
+
+            bbox_width_km = ((maxx - minx) * 111 * math.cos(math.radians(lat)))  # Aproximando para km
+            bbox_height_km = ((maxy - miny) * 111)  # Aproximando para km
+            radius_km = max(bbox_width_km, bbox_height_km) / 2  # Raio = metade do maior lado
+
+            logging.info(f"Raio estimado do BBOX do tile {tile_id}: {radius_km:.2f} km")
+
+    elif lat is not None and lon is not None:
+        main_bbox = BoundingBoxCalculator.calcular(lat, lon, radius_km)
+        logging.info("Entrei aqui sem ID")
+    else:
+        logging.error("É necessário fornecer latitude/longitude ou um ID de tile Sentinel-2.")
+        raise ValueError("Faltam parâmetros para definir a área de interesse.")
+    
     logging.info(f"BBox principal: {main_bbox}")
 
     fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
