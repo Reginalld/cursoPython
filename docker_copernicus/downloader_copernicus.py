@@ -323,7 +323,7 @@ def main(
                     logging.warning(f"Nenhuma imagem encontrada para lote {idx+1}")
                     continue
 
-                tile_filename = f"{satelite}_{tile}_tile_{idx+1}.tif"
+                tile_filename = f"{satelite}_{tile}_{lat:.5f}_{lon:.5f}_tile_{idx+1}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
                 filenames.append(tile_filename)
                 images.append(image)
 
