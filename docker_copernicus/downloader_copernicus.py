@@ -145,7 +145,7 @@ class ImageDownloader:
         def process_download(image, filename,delay):
             return self.download(image, filename,delay)
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for idx, (img, fname) in enumerate(zip(image_list, filenames)):
                 delay = idx * 2
@@ -251,6 +251,12 @@ def mosaic_tiles(tile_files, output_path):
 app = typer.Typer()
 
 
+TILES_PARANA = [
+    "21JYM", "21JYN", "21KYP", "22JBS", "22JBT", "22KBU", "22KBV", "22JCS", "22JCT", 
+    "22KCU", "22KCV", "22JDS", "22JDT", "22KDU", "22KDV", "22JES", "22JET", "22KEU", 
+    "22KEV", "22JFS", "22JFT", "22KFU", "22JGS", "22JGT"
+]
+
 @app.command()
 def main(
     satelite: str = typer.Argument(..., help="Escolha um satélite (SENTINEL2_L1C, SENTINEL2_L2A, SENTINEL1_GRD)"),
@@ -269,122 +275,191 @@ def main(
     copernicus_conn = CopernicusConnection(client_id, client_secret)
     copernicus_conn.initialize()
 
-    if tile_id:
-        logging.info(f"Buscando geometria para o tile {tile_id} na grade do Sentinel-2...")
-        tile_grid = gpd.read_file(tile_grid_path)
-
-        def clean_html(value):
-            return re.sub(r'<.*?>', "", str(value))
-
-        tile_grid = tile_grid.applymap(clean_html)
-        tile_grid = tile_grid[tile_grid["NAME"] == tile_id]
-
-        if tile_grid.empty:
-            logging.error(f"Tile {tile_id} não encontrado na grade Sentinel-2.")
-            raise ValueError("Tile ID inválido.")
-
-        tile_geometry = loads(tile_grid.geometry.iloc[0])
-        minx, miny, maxx, maxy = tile_geometry.bounds
-
-        main_bbox = {
-            "west": minx,
-            "south": miny,
-            "east": maxx,
-            "north": maxy,
-            "crs": "EPSG:4326"
-        }
-
-        lat = (maxy + miny) / 2
-        lon = (maxx + minx) / 2
-
-        bbox_width_km = ((maxx - minx) * 111 * math.cos(math.radians(lat)))
-        bbox_height_km = ((maxy - miny) * 111)
-        radius_km = max(bbox_width_km, bbox_height_km) / 2
-
-        logging.info(f"Raio estimado do BBOX do tile {tile_id}: {radius_km:.2f} km")
-
-    elif lat is not None and lon is not None:
-        main_bbox = BoundingBoxCalculator.calcular(lat, lon, radius_km)
-        logging.info("Processando sem tile ID...")
-    else:
-        logging.error("É necessário fornecer latitude/longitude ou um ID de tile Sentinel-2.")
-        raise ValueError("Faltam parâmetros para definir a área de interesse.")
-
-    logging.info(f"BBox principal: {main_bbox}")
-
     fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
     image_downloader = ImageDownloader(output_dir)
 
-    if radius_km >= 21:
-        tiles = divide_bbox(main_bbox, tile_size_km, lat, radius_km)
-        logging.info(f"Área dividida em {len(tiles)} lotes")
-
+    if tile_id in ["Paraná", "parana"]:
+        logging.info("Iniciando download para todos os tiles do Paraná...")
         temp_files = []
         tile_dir = os.path.join(output_dir, "tiles")
         tile_dir = os.path.abspath(tile_dir)
-
-        if not os.path.exists(tile_dir):
-            os.makedirs(tile_dir, exist_ok=True)
-
         image_downloader = ImageDownloader(tile_dir)
-        images = []
-        filenames = []
+        
+        for tile in TILES_PARANA:
+            logging.info(f"Processando tile {tile}...")
+            
+            tile_grid = gpd.read_file(tile_grid_path)
+            tile_grid = tile_grid[tile_grid["NAME"] == tile]
 
-        for idx, tile_bbox in enumerate(tiles):
-            logging.info(f"Lote {idx+1}/{len(tiles)} sendo processado...")
-            image = fetcher.fetch_image(satelite, tile_bbox, start_date, end_date)
-
-            if image is None:
-                logging.warning(f"Nenhuma imagem encontrada para o lote {idx+1}")
+            if tile_grid.empty:
+                logging.warning(f"Tile {tile} não encontrado na grade Sentinel-2. Pulando...")
                 continue
 
-            if tile_id:
-                tile_filename = f"{satelite}_{tile_id}_{lat:.5f}_{lon:.5f}_tile_{idx+1}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
-            else:
-                tile_filename = f"{satelite}_{lat:.5f}_{lon:.5f}_tile_{idx+1}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
+            tile_geometry = tile_grid.geometry.iloc[0]
+            minx, miny, maxx, maxy = tile_geometry.bounds
+            main_bbox = {
+                "west": minx,
+                "south": miny,
+                "east": maxx,
+                "north": maxy,
+                "crs": "EPSG:4326"
+            }
 
-            filenames.append(tile_filename)
-            images.append(image)
+            lat = (maxy + miny) / 2
+            lon = (maxx + minx) / 2
+            bbox_width_km = ((maxx - minx) * 111 * math.cos(math.radians(lat)))
+            bbox_height_km = ((maxy - miny) * 111)
+            radius_km = max(bbox_width_km, bbox_height_km) / 2
 
-        if images:
-            image_downloader.download_async(images, filenames)
-            temp_files.extend([os.path.join(tile_dir, fname) for fname in filenames])
-        else:
-            logging.error("Nenhum lote foi baixado com sucesso.")
-            return
+            tiles = divide_bbox(main_bbox, tile_size_km, lat, radius_km)
 
-        for filename in temp_files:
-            if os.path.exists(filename):
-                logging.info(f"Arquivo baixado com sucesso: {filename}")
-            else:
-                logging.error(f"Erro: arquivo {filename} não foi encontrado")
+            images = []
+            filenames = []
+            for idx, tile_bbox in enumerate(tiles):
+                logging.info(f"Lote {idx+1}/{len(tiles)} do tile {tile}...")
+
+                image = fetcher.fetch_image(satelite, tile_bbox, start_date, end_date)
+                if image is None:
+                    logging.warning(f"Nenhuma imagem encontrada para lote {idx+1}")
+                    continue
+
+                tile_filename = f"{satelite}_{tile}_tile_{idx+1}.tif"
+                filenames.append(tile_filename)
+                images.append(image)
+
+            if images:
+                image_downloader.download_async(images, filenames)
+                tile_files = [os.path.join(tile_dir, fname) for fname in filenames]
+                temp_files.extend(tile_files)
+
+            for filename in temp_files:
+                if os.path.exists(filename):
+                    logging.info(f"Arquivo baixado com sucesso: {filename}")
+                else:
+                    logging.error(f"Erro: arquivo {filename} não foi encontrado")
 
         temp_files = [f for f in temp_files if os.path.exists(f)]
 
-        if tile_id:
-            final_filename = f"{satelite}_{tile_id}_{lat:.5f}_{lon:.5f}_{radius_km:.2f}km_{start_date}_{end_date}_mosaic.tif"
-        else:
-            final_filename = f"{satelite}_{lat:.5f}_{lon:.5f}_{radius_km:.2f}km_{start_date}_{end_date}_mosaic.tif"
-
-        final_filepath = os.path.join(output_dir, final_filename)
-
+        parana_mosaic_output = os.path.join(output_dir, f"{satelite}_Parana_mosaic.tif")
         if temp_files:
-            mosaic_tiles(temp_files, final_filepath)
-            logging.info(f"Mosaico final criado em: {final_filepath}")
+            mosaic_tiles(temp_files, parana_mosaic_output)
+            logging.info(f"Mosaico final do Paraná criado em: {parana_mosaic_output}")
         else:
-            logging.error("Nenhum arquivo de tile foi baixado com sucesso. Mosaico não criado.")
+            logging.error("Nenhum mosaico foi criado para o Paraná.")
     else:
-        image = fetcher.fetch_image(satelite, main_bbox, start_date, end_date)
-        if image is None:
-            logging.warning("Nenhuma imagem encontrada")
-            return
-
         if tile_id:
-            filename = f"{satelite}_{tile_id}_{lat:.5f}_{lon:.5f}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
-        else:
-            filename = f"{satelite}_{lat:.5f}_{lon:.5f}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
+            logging.info(f"Buscando geometria para o tile {tile_id} na grade do Sentinel-2...")
+            tile_grid = gpd.read_file(tile_grid_path)
 
-        image_downloader.download(image, filename)
+            def clean_html(value):
+                return re.sub(r'<.*?>', "", str(value))
+
+            tile_grid = tile_grid.applymap(clean_html)
+            tile_grid = tile_grid[tile_grid["NAME"] == tile_id]
+
+            if tile_grid.empty:
+                logging.error(f"Tile {tile_id} não encontrado na grade Sentinel-2.")
+                raise ValueError("Tile ID inválido.")
+
+            tile_geometry = loads(tile_grid.geometry.iloc[0])
+            minx, miny, maxx, maxy = tile_geometry.bounds
+
+            main_bbox = {
+                "west": minx,
+                "south": miny,
+                "east": maxx,
+                "north": maxy,
+                "crs": "EPSG:4326"
+            }
+
+            lat = (maxy + miny) / 2
+            lon = (maxx + minx) / 2
+
+            bbox_width_km = ((maxx - minx) * 111 * math.cos(math.radians(lat)))
+            bbox_height_km = ((maxy - miny) * 111)
+            radius_km = max(bbox_width_km, bbox_height_km) / 2
+
+            logging.info(f"Raio estimado do BBOX do tile {tile_id}: {radius_km:.2f} km")
+
+        elif lat is not None and lon is not None:
+            main_bbox = BoundingBoxCalculator.calcular(lat, lon, radius_km)
+            logging.info("Processando sem tile ID...")
+        else:
+            logging.error("É necessário fornecer latitude/longitude ou um ID de tile Sentinel-2.")
+            raise ValueError("Faltam parâmetros para definir a área de interesse.")
+
+        logging.info(f"BBox principal: {main_bbox}")
+
+        if radius_km >= 21:
+            tiles = divide_bbox(main_bbox, tile_size_km, lat, radius_km)
+            logging.info(f"Área dividida em {len(tiles)} lotes")
+
+            temp_files = []
+            tile_dir = os.path.join(output_dir, "tiles")
+            tile_dir = os.path.abspath(tile_dir)
+
+            if not os.path.exists(tile_dir):
+                os.makedirs(tile_dir, exist_ok=True)
+
+            image_downloader = ImageDownloader(tile_dir)
+            images = []
+            filenames = []
+
+            for idx, tile_bbox in enumerate(tiles):
+                logging.info(f"Lote {idx+1}/{len(tiles)} sendo processado...")
+                image = fetcher.fetch_image(satelite, tile_bbox, start_date, end_date)
+
+                if image is None:
+                    logging.warning(f"Nenhuma imagem encontrada para o lote {idx+1}")
+                    continue
+
+                if tile_id:
+                    tile_filename = f"{satelite}_{tile_id}_{lat:.5f}_{lon:.5f}_tile_{idx+1}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
+                else:
+                    tile_filename = f"{satelite}_{lat:.5f}_{lon:.5f}_tile_{idx+1}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
+
+                filenames.append(tile_filename)
+                images.append(image)
+
+            if images:
+                image_downloader.download_async(images, filenames)
+                temp_files.extend([os.path.join(tile_dir, fname) for fname in filenames])
+            else:
+                logging.error("Nenhum lote foi baixado com sucesso.")
+                return
+
+            for filename in temp_files:
+                if os.path.exists(filename):
+                    logging.info(f"Arquivo baixado com sucesso: {filename}")
+                else:
+                    logging.error(f"Erro: arquivo {filename} não foi encontrado")
+
+            temp_files = [f for f in temp_files if os.path.exists(f)]
+
+            if tile_id:
+                final_filename = f"{satelite}_{tile_id}_{lat:.5f}_{lon:.5f}_{radius_km:.2f}km_{start_date}_{end_date}_mosaic.tif"
+            else:
+                final_filename = f"{satelite}_{lat:.5f}_{lon:.5f}_{radius_km:.2f}km_{start_date}_{end_date}_mosaic.tif"
+
+            final_filepath = os.path.join(output_dir, final_filename)
+
+            if temp_files:
+                mosaic_tiles(temp_files, final_filepath)
+                logging.info(f"Mosaico final criado em: {final_filepath}")
+            else:
+                logging.error("Nenhum arquivo de tile foi baixado com sucesso. Mosaico não criado.")
+        else:
+            image = fetcher.fetch_image(satelite, main_bbox, start_date, end_date)
+            if image is None:
+                logging.warning("Nenhuma imagem encontrada")
+                return
+
+            if tile_id:
+                filename = f"{satelite}_{tile_id}_{lat:.5f}_{lon:.5f}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
+            else:
+                filename = f"{satelite}_{lat:.5f}_{lon:.5f}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
+
+            image_downloader.download(image, filename)
 
 if __name__ == "__main__":
     app()
