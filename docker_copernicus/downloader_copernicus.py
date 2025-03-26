@@ -12,6 +12,8 @@ import re
 from shapely.wkt import loads
 from rasterio.errors import RasterioIOError
 from rasterio.merge import merge
+from openeo.rest.connection import OpenEoApiError
+
 
 
 logging.basicConfig(
@@ -77,7 +79,7 @@ class SatelliteImageFetcher:
                     max_cloud_cover=20,
                 )
 
-                image = image.resample_spatial(resolution=10)
+                image = image.resample_spatial(resolution=20)
                 image = image.reduce_dimension(dimension='t', reducer='median')
 
 
@@ -123,7 +125,7 @@ class ImageDownloader:
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir, exist_ok=True) 
 
-    def download(self, image, filename,delay):
+    def download(self, image, filename,delay, retry=2):
         try:
             if image is None:
                 logging.error("Tentativa de download com imagem inválida")
@@ -132,11 +134,21 @@ class ImageDownloader:
 
             filepath = os.path.join(self.output_dir, filename)
             logging.info(f"filepath calculado: {filepath}")
-            os.makedirs(os.path.dirname(filepath), exist_ok=True) 
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             logging.info(f"Iniciando download da imagem para {filepath}...")
             image.download(filepath)
-            logging.info(f'Download concluído')
+            logging.info("Download concluído")
             return filepath
+
+        except OpenEoApiError as e:
+            if "429" in str(e) and retry > 0:
+                logging.warning(f"Erro 429: Too Many Requests. Tentando novamente ({retry} tentativas restantes)...")
+                time.sleep(10)  # Espera antes de tentar novamente
+                return self.download(image, filename, delay, retry - 1)
+            else:
+                logging.error(f"Erro ao fazer download da imagem: {str(e)}")
+                raise RuntimeError("Erro ao fazer download da imagem", e)
+
         except Exception as e:
             logging.error(f"Erro ao fazer download da imagem: {str(e)}")
             raise RuntimeError("Erro ao fazer download da imagem", e)
@@ -252,12 +264,13 @@ app = typer.Typer()
 
 
 TILES_PARANA = [
-    "21JYM", "21JYN", "21KYP", "22JBS", "22JBT", "22KBU", "22KBV", "22JCS", "22JCT", 
-    "22KCU", "22KCV", "22JDS", "22JDT", "22KDU", "22KDV", "22JES", "22JET", "22KEU", 
+    "21JYM", "21JYN", "21KYP","22JBS", "22JBT", "22KBU", "22KBV", "22JCS", "22JCT", 
+    "22KCU", "22KCV", "22JDS", "22JDT", "22KDU", "22KDV","22JES", "22JET", "22KEU", 
     "22KEV", "22JFS", "22JFT", "22KFU", "22JGS", "22JGT"
 ]
 
 @app.command()
+
 def main(
     satelite: str = typer.Argument(..., help="Escolha um satélite (SENTINEL2_L1C, SENTINEL2_L2A, SENTINEL1_GRD)"),
     lat: float = typer.Option(None, help="Latitude da área de interesse"),
@@ -266,8 +279,8 @@ def main(
     radius_km: float = typer.Option(10.0, help="Raio da área de interesse em km"),
     start_date: str = typer.Argument(..., help="Data de início (YYYY-MM-DD)"),
     end_date: str = typer.Argument(..., help="Data final (YYYY-MM-DD)"),
-    client_id: str = typer.Option('sh-780be612-cdd5-46c2-be80-016e3d9e3941', help="Client ID da conta Copernicus"),
-    client_secret: str = typer.Option('wNqrCLhYnogycEclvClgVfrCRzNxjzec', help="Client Secret da conta Copernicus"),
+    client_id: str = typer.Option('sh-ff633461-c5fb-4a97-a5f5-dc6ef747634f', help="Client ID da conta Copernicus"),
+    client_secret: str = typer.Option('lDluoPmsimOHBbu11RJWrypbyBLwaFGd', help="Client Secret da conta Copernicus"),
     output_dir: str = typer.Option("docker_copernicus\\imagens", help="Diretório de saída para salvar as imagens"),
     tile_size_km: float = typer.Option(16.0),
     tile_grid_path: str = typer.Option("docker_copernicus\\shapefile_ids\\grade_sentinel_brasil.shp")
@@ -280,10 +293,11 @@ def main(
 
     if tile_id in ["Paraná", "parana"]:
         logging.info("Iniciando download para todos os tiles do Paraná...")
-        temp_files = []
+        
         tile_dir = os.path.join(output_dir, "tiles")
-        tile_dir = os.path.abspath(tile_dir)
-        image_downloader = ImageDownloader(tile_dir)
+        os.makedirs(tile_dir, exist_ok=True)
+        
+        tile_mosaic_files = []
         
         for tile in TILES_PARANA:
             logging.info(f"Processando tile {tile}...")
@@ -297,6 +311,7 @@ def main(
 
             tile_geometry = tile_grid.geometry.iloc[0]
             minx, miny, maxx, maxy = tile_geometry.bounds
+
             main_bbox = {
                 "west": minx,
                 "south": miny,
@@ -312,17 +327,19 @@ def main(
             radius_km = max(bbox_width_km, bbox_height_km) / 2
 
             tiles = divide_bbox(main_bbox, tile_size_km, lat, radius_km)
-
+            
+            image_downloader = ImageDownloader(tile_dir)
             images = []
             filenames = []
+
             for idx, tile_bbox in enumerate(tiles):
                 logging.info(f"Lote {idx+1}/{len(tiles)} do tile {tile}...")
-
+                
                 image = fetcher.fetch_image(satelite, tile_bbox, start_date, end_date)
                 if image is None:
                     logging.warning(f"Nenhuma imagem encontrada para lote {idx+1}")
                     continue
-
+                
                 tile_filename = f"{satelite}_{tile}_{lat:.5f}_{lon:.5f}_tile_{idx+1}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
                 filenames.append(tile_filename)
                 images.append(image)
@@ -330,22 +347,27 @@ def main(
             if images:
                 image_downloader.download_async(images, filenames)
                 tile_files = [os.path.join(tile_dir, fname) for fname in filenames]
-                temp_files.extend(tile_files)
+                # Verifica se os arquivos baixados existem
+                tile_files = [f for f in tile_files if os.path.exists(f)]
+            else:
+                logging.warning(f"Nenhum dado baixado para tile {tile}.")
+                continue
 
-            for filename in temp_files:
-                if os.path.exists(filename):
-                    logging.info(f"Arquivo baixado com sucesso: {filename}")
-                else:
-                    logging.error(f"Erro: arquivo {filename} não foi encontrado")
+            tile_mosaic_output = os.path.join(tile_dir, f"{satelite}_{tile}_mosaic.tif")
+            if tile_files:
+                mosaic_tiles(tile_files, tile_mosaic_output)
+                logging.info(f"Mosaico do tile {tile} criado: {tile_mosaic_output}")
+                tile_mosaic_files.append(tile_mosaic_output)
+            else:
+                logging.warning(f"Nenhum mosaico criado para tile {tile}.")
 
-        temp_files = [f for f in temp_files if os.path.exists(f)]
-
-        parana_mosaic_output = os.path.join(output_dir, f"{satelite}_Parana_mosaic.tif")
-        if temp_files:
-            mosaic_tiles(temp_files, parana_mosaic_output)
+        if tile_mosaic_files:
+            parana_mosaic_output = os.path.join(output_dir, f"{satelite}_{start_date}_{end_date}_Parana_mosaic.tif")
+            mosaic_tiles(tile_mosaic_files, parana_mosaic_output)
             logging.info(f"Mosaico final do Paraná criado em: {parana_mosaic_output}")
         else:
             logging.error("Nenhum mosaico foi criado para o Paraná.")
+
     else:
         if tile_id:
             logging.info(f"Buscando geometria para o tile {tile_id} na grade do Sentinel-2...")
