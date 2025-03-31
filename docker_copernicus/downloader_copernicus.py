@@ -5,6 +5,7 @@ import os
 import typer
 import rasterio
 from rasterio.merge import merge
+import rasterio.warp
 from concurrent.futures import ThreadPoolExecutor
 import time
 import geopandas as gpd
@@ -13,6 +14,8 @@ from shapely.wkt import loads
 from rasterio.errors import RasterioIOError
 from rasterio.merge import merge
 from openeo.rest.connection import OpenEoApiError
+import subprocess
+
 
 
 
@@ -76,10 +79,10 @@ class SatelliteImageFetcher:
                     spatial_extent=bounding_box,
                     temporal_extent=[start_date, end_date],
                     bands=["B02", "B03", "B04"],
-                    max_cloud_cover=20,
+                    max_cloud_cover=40,
                 )
 
-                image = image.resample_spatial(resolution=20)
+                image = image.resample_spatial(resolution=10)
                 image = image.reduce_dimension(dimension='t', reducer='median')
 
 
@@ -211,35 +214,56 @@ def mosaic_tiles(tile_files, output_path):
     src_files = []
     band_count = None
     valid_files = []
+    common_crs = "EPSG:32721"  # CRS comum definido
 
     for fp in tile_files:
         try:
             with rasterio.open(fp) as src:
-                # Verifica se o arquivo pode ser lido corretamente
                 if src.count == 0:
-                    raise RasterioIOError(f"Arquivo {fp} não possui bandas válidas.")
-                
+                    raise rasterio.errors.RasterioIOError(f"Arquivo {fp} não possui bandas válidas.")
+
                 if band_count is None:
                     band_count = src.count
                 elif src.count != band_count:
-                    logging.warning(f"Arquivo {fp} possui {src.count} bandas, diferente do esperado ({band_count}). Ignorando este arquivo.")
-                    continue  # Pula esse arquivo
+                    logging.warning(f"Arquivo {fp} possui {src.count} bandas, diferente do esperado ({band_count}). Ignorando.")
+                    continue
 
-                # Adiciona à lista de arquivos válidos
+                if src.crs != common_crs:
+                    logging.warning(f"Arquivo {fp} tem CRS diferente ({src.crs}). Reprojetando...")
+
+                    reprojected_fp = fp.replace(".tif", "_reprojected.tif")
+                    cmd = [
+                        "gdalwarp",
+                        "-t_srs", common_crs,
+                        "-dstnodata", "-32768",
+                        "-overwrite",
+                        fp,
+                        reprojected_fp
+                    ]
+
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    if result.returncode != 0:
+                        logging.error(f"Erro ao reprojetar {fp}: {result.stderr}")
+                        continue
+
+                    valid_files.append(reprojected_fp)
+                    src_files.append(rasterio.open(reprojected_fp))
+                    continue
+
                 valid_files.append(fp)
-                src_files.append(rasterio.open(fp))  # Reabrir para o merge
-            
-        except RasterioIOError as e:
-            logging.error(f"Erro ao abrir o arquivo {fp}: {e}")
-            os.remove(fp)  # Remove o arquivo corrompido
+                src_files.append(rasterio.open(fp))
+
+        except rasterio.errors.RasterioIOError as e:
+            logging.error(f"Erro ao abrir {fp}: {e}")
+            os.remove(fp)
             logging.info(f"Arquivo corrompido {fp} foi removido.")
 
     if not src_files:
         logging.error("Nenhum arquivo válido para mosaico.")
         return None
 
-    # Realiza a fusão
-    mosaic, out_trans = merge(src_files)
+    # Fusão dos arquivos ajustados
+    mosaic, out_trans = rasterio.merge.merge(src_files)
 
     out_meta = src_files[0].meta.copy()
     out_meta.update({
@@ -247,8 +271,9 @@ def mosaic_tiles(tile_files, output_path):
         "height": mosaic.shape[1],
         "width": mosaic.shape[2],
         "transform": out_trans,
-        "count": src_files[0].count,  
-        "dtype": src_files[0].dtypes[0]  
+        "count": src_files[0].count,
+        "dtype": src_files[0].dtypes[0],
+        "crs": common_crs
     })
 
     with rasterio.open(output_path, "w", **out_meta) as dest:
@@ -257,6 +282,7 @@ def mosaic_tiles(tile_files, output_path):
     for src in src_files:
         src.close()
 
+    logging.info(f"Mosaico salvo em: {output_path}")
     return output_path
 
 
@@ -264,7 +290,7 @@ app = typer.Typer()
 
 
 TILES_PARANA = [
-    "21JYM", "21JYN", "21KYP","22JBS", "22JBT", "22KBU", "22KBV", "22JCS", "22JCT", 
+    "21JYM", "21JYN", "21KYP","22JBS","22JBT", "22KBU", "22KBV", "22JCS", "22JCT", 
     "22KCU", "22KCV", "22JDS", "22JDT", "22KDU", "22KDV","22JES", "22JET", "22KEU", 
     "22KEV", "22JFS", "22JFT", "22KFU", "22JGS", "22JGT"
 ]
@@ -353,7 +379,7 @@ def main(
                 logging.warning(f"Nenhum dado baixado para tile {tile}.")
                 continue
 
-            tile_mosaic_output = os.path.join(tile_dir, f"{satelite}_{tile}_mosaic.tif")
+            tile_mosaic_output = os.path.join(tile_dir, f"{satelite}_{tile}_{start_date}_{end_date}_mosaic.tif")
             if tile_files:
                 mosaic_tiles(tile_files, tile_mosaic_output)
                 logging.info(f"Mosaico do tile {tile} criado: {tile_mosaic_output}")
@@ -362,7 +388,7 @@ def main(
                 logging.warning(f"Nenhum mosaico criado para tile {tile}.")
 
         if tile_mosaic_files:
-            parana_mosaic_output = os.path.join(output_dir, f"{satelite}_{start_date}_{end_date}_Parana_mosaic.tif")
+            parana_mosaic_output = os.path.join(output_dir, f"{satelite}_Parana_mosaic_{start_date}_{end_date}_2.tif")
             mosaic_tiles(tile_mosaic_files, parana_mosaic_output)
             logging.info(f"Mosaico final do Paraná criado em: {parana_mosaic_output}")
         else:

@@ -1,0 +1,18 @@
+2025-03-27 08:00:03.282917 - Iniciando script...
+2025-03-27 08:00:05.506471 - Requisição https://m2m.cr.usgs.gov/api/api/json/stable/login-token concluída com sucesso.
+2025-03-27 08:00:05.507472 - API Key obtida: eyJjaWQiOjI3NDE2NDc3LCJzIjoiMTc0MzA3MzIwMyIsInIiOjU4MCwicCI6WyJ1c2VyIiwiZG93bmxvYWQiLCJvcmRlciJdfQ==
+2025-03-27 08:00:05.508471 - Buscando datasets...
+2025-03-27 08:00:06.384635 - Requisição https://m2m.cr.usgs.gov/api/api/json/stable/dataset-search concluída com sucesso.
+2025-03-27 08:00:06.384635 - 1 datasets encontrados.
+2025-03-27 08:00:06.385636 - Buscando cenas...
+2025-03-27 08:00:07.741940 - Requisição https://m2m.cr.usgs.gov/api/api/json/stable/scene-search concluída com sucesso.
+2025-03-27 08:00:09.187894 - Requisição https://m2m.cr.usgs.gov/api/api/json/stable/download-options concluída com sucesso.
+2025-03-27 08:00:10.426798 - Requisição https://m2m.cr.usgs.gov/api/api/json/stable/download-request concluída com sucesso.
+2025-03-27 08:00:10.429801 - Aguardando downloads...
+2025-03-27 08:06:03.880381 - Download concluído: usgs\\images\tiles\LC09_L2SP_224078_20240505_20240506_02_T1.tar
+2025-03-27 08:06:09.923005 - Imagem RGB combinada salva em: usgs\\images\LC09_L2SP_224078_20240505_20240506_02_T1_RGB.tif
+2025-03-27 08:08:34.179202 - Download concluído: usgs\\images\tiles\LC09_L2SP_224077_20240505_20240506_02_T1.tar
+2025-03-27 08:08:40.045547 - Imagem RGB combinada salva em: usgs\\images\LC09_L2SP_224077_20240505_20240506_02_T1_RGB.tif
+2025-03-27 08:08:40.078546 - Downloads concluídos.
+2025-03-27 08:08:40.856778 - Requisição https://m2m.cr.usgs.gov/api/api/json/stable/logout concluída com sucesso.
+2025-03-27 08:08:40.857778 - Logout realizado.
