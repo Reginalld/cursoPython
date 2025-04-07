@@ -78,11 +78,11 @@ class SatelliteImageFetcher:
                     "SENTINEL2_L2A",
                     spatial_extent=bounding_box,
                     temporal_extent=[start_date, end_date],
-                    bands=["B02", "B03", "B04"],
+                    bands=["B02", "B03", "B04","B08"],
                     max_cloud_cover=40,
                 )
 
-                image = image.resample_spatial(resolution=10)
+                image = image.resample_spatial(resolution=60)
                 image = image.reduce_dimension(dimension='t', reducer='median')
 
 
@@ -91,7 +91,7 @@ class SatelliteImageFetcher:
                     "SENTINEL2_L2A",
                     spatial_extent=bounding_box,
                     temporal_extent = [start_date, end_date],
-                    bands=["B02", "B03", "B04"],
+                    bands=["B02", "B03", "B04","B08"],
                     max_cloud_cover=20,
 
                 )
@@ -175,115 +175,125 @@ class ImageDownloader:
                 except Exception as e:
                     logging.error(f"Erro no download assíncrono: {e}")
         
-def divide_bbox(bbox, tile_size_km, center_lat,raio_condicional):
+class BBoxProcessor:
+    def __init__(self, bbox, tile_size_km, center_lat, raio_condicional):
+        self.bbox = bbox
+        self.tile_size_km = tile_size_km
+        self.center_lat = center_lat
+        self.raio_condicional = raio_condicional
+             
+    def divide_bbox(self):
 
-    radius_km = ((bbox['north'] - bbox['south']) * 111) / 2
-    if int(raio_condicional) >= 80:
-        desired_divisions = 5
-    elif int(raio_condicional) >= 50 and int(raio_condicional) <= 79:
-        desired_divisions = 4
-    # elif int(raio_condicional) >= 30 and int(raio_condicional) <= 49:
-    #     desired_divisions = 3
-    else:
-        desired_divisions = 3
-        logging.info('Entrei no if condicional')
+        radius_km = ((self.bbox['north'] - self.bbox['south']) * 111) / 2
+        if int(self.raio_condicional) >= 80:
+            desired_divisions = 5
+        elif int(self.raio_condicional) >= 50 and int(self.raio_condicional) <= 79:
+            desired_divisions = 4
+        else:
+            desired_divisions = 3
+            logging.info('Entrei no if condicional')
 
-    effective_tile_size = max(tile_size_km, (2 * radius_km) / desired_divisions)
-    
-    delta_lat = effective_tile_size / 111.0
-    delta_lon = effective_tile_size / (111.0 * math.cos(math.radians(center_lat)))
-    
-    bboxes = []
-    current_lat = bbox['south']
-    while current_lat < bbox['north']:
-        current_lon = bbox['west']
-        while current_lon < bbox['east']:
-            sub_bbox = {
-                'west': current_lon,
-                'south': current_lat,
-                'east': min(current_lon + delta_lon, bbox['east']),
-                'north': min(current_lat + delta_lat, bbox['north']),
-                'crs': 'EPSG:4326'
-            }
-            bboxes.append(sub_bbox)
-            current_lon += delta_lon
-        current_lat += delta_lat
-    return bboxes
+        effective_tile_size = max(self.tile_size_km, (2 * radius_km) / desired_divisions)
+        
+        delta_lat = effective_tile_size / 111.0
+        delta_lon = effective_tile_size / (111.0 * math.cos(math.radians(self.center_lat)))
+        
+        bboxes = []
+        current_lat = self.bbox['south']
+        while current_lat < self.bbox['north']:
+            current_lon = self.bbox['west']
+            while current_lon < self.bbox['east']:
+                sub_bbox = {
+                    'west': current_lon,
+                    'south': current_lat,
+                    'east': min(current_lon + delta_lon, self.bbox['east']),
+                    'north': min(current_lat + delta_lat, self.bbox['north']),
+                    'crs': 'EPSG:4326'
+                }
+                bboxes.append(sub_bbox)
+                current_lon += delta_lon
+            current_lat += delta_lat
+        return bboxes
 
-def mosaic_tiles(tile_files, output_path):
-    src_files = []
-    band_count = None
-    valid_files = []
-    common_crs = "EPSG:32721"  # CRS comum definido
+class TileMosaicker:
+    def __init__(self, tile_files, output_path):
+        self.tile_files = tile_files
+        self.output_path = output_path
 
-    for fp in tile_files:
-        try:
-            with rasterio.open(fp) as src:
-                if src.count == 0:
-                    raise rasterio.errors.RasterioIOError(f"Arquivo {fp} não possui bandas válidas.")
+    def mosaic_tiles(self):
+        src_files = []
+        band_count = None
+        valid_files = []
+        common_crs = "EPSG:32721"  # CRS comum definido
 
-                if band_count is None:
-                    band_count = src.count
-                elif src.count != band_count:
-                    logging.warning(f"Arquivo {fp} possui {src.count} bandas, diferente do esperado ({band_count}). Ignorando.")
-                    continue
+        for fp in self.tile_files:
+            try:
+                with rasterio.open(fp) as src:
+                    if src.count == 0:
+                        raise rasterio.errors.RasterioIOError(f"Arquivo {fp} não possui bandas válidas.")
 
-                if src.crs != common_crs:
-                    logging.warning(f"Arquivo {fp} tem CRS diferente ({src.crs}). Reprojetando...")
-
-                    reprojected_fp = fp.replace(".tif", "_reprojected.tif")
-                    cmd = [
-                        "gdalwarp",
-                        "-t_srs", common_crs,
-                        "-dstnodata", "-32768",
-                        "-overwrite",
-                        fp,
-                        reprojected_fp
-                    ]
-
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    if result.returncode != 0:
-                        logging.error(f"Erro ao reprojetar {fp}: {result.stderr}")
+                    if band_count is None:
+                        band_count = src.count
+                    elif src.count != band_count:
+                        logging.warning(f"Arquivo {fp} possui {src.count} bandas, diferente do esperado ({band_count}). Ignorando.")
                         continue
 
-                    valid_files.append(reprojected_fp)
-                    src_files.append(rasterio.open(reprojected_fp))
-                    continue
+                    if src.crs != common_crs:
+                        logging.warning(f"Arquivo {fp} tem CRS diferente ({src.crs}). Reprojetando...")
 
-                valid_files.append(fp)
-                src_files.append(rasterio.open(fp))
+                        reprojected_fp = fp.replace(".tif", "_reprojected.tif")
+                        cmd = [
+                            "gdalwarp",
+                            "-t_srs", common_crs,
+                            "-dstnodata", "-32768",
+                            "-overwrite",
+                            fp,
+                            reprojected_fp
+                        ]
 
-        except rasterio.errors.RasterioIOError as e:
-            logging.error(f"Erro ao abrir {fp}: {e}")
-            os.remove(fp)
-            logging.info(f"Arquivo corrompido {fp} foi removido.")
+                        result = subprocess.run(cmd, capture_output=True, text=True)
+                        if result.returncode != 0:
+                            logging.error(f"Erro ao reprojetar {fp}: {result.stderr}")
+                            continue
 
-    if not src_files:
-        logging.error("Nenhum arquivo válido para mosaico.")
-        return None
+                        valid_files.append(reprojected_fp)
+                        src_files.append(rasterio.open(reprojected_fp))
+                        continue
 
-    # Fusão dos arquivos ajustados
-    mosaic, out_trans = rasterio.merge.merge(src_files)
+                    valid_files.append(fp)
+                    src_files.append(rasterio.open(fp))
 
-    out_meta = src_files[0].meta.copy()
-    out_meta.update({
-        "driver": "GTiff",
-        "height": mosaic.shape[1],
-        "width": mosaic.shape[2],
-        "transform": out_trans,
-        "count": src_files[0].count,
-        "dtype": src_files[0].dtypes[0],
-        "crs": common_crs
-    })
+            except rasterio.errors.RasterioIOError as e:
+                logging.error(f"Erro ao abrir {fp}: {e}")
+                os.remove(fp)
+                logging.info(f"Arquivo corrompido {fp} foi removido.")
 
-    with rasterio.open(output_path, "w", **out_meta) as dest:
-        dest.write(mosaic)
+        if not src_files:
+            logging.error("Nenhum arquivo válido para mosaico.")
+            return None
 
-    for src in src_files:
-        src.close()
+        # Fusão dos arquivos ajustados
+        mosaic, out_trans = rasterio.merge.merge(src_files)
 
-    logging.info(f"Mosaico salvo em: {output_path}")
-    return output_path
+        out_meta = src_files[0].meta.copy()
+        out_meta.update({
+            "driver": "GTiff",
+            "height": mosaic.shape[1],
+            "width": mosaic.shape[2],
+            "transform": out_trans,
+            "count": src_files[0].count,
+            "dtype": src_files[0].dtypes[0],
+            "crs": common_crs
+        })
+
+        with rasterio.open(self.output_path, "w", **out_meta) as dest:
+            dest.write(mosaic)
+
+        for src in src_files:
+            src.close()
+
+        logging.info(f"Mosaico salvo em: {self.output_path}")
+        return self.output_path
 
 
 app = typer.Typer()
@@ -305,8 +315,8 @@ def main(
     radius_km: float = typer.Option(10.0, help="Raio da área de interesse em km"),
     start_date: str = typer.Argument(..., help="Data de início (YYYY-MM-DD)"),
     end_date: str = typer.Argument(..., help="Data final (YYYY-MM-DD)"),
-    client_id: str = typer.Option('sh-ff633461-c5fb-4a97-a5f5-dc6ef747634f', help="Client ID da conta Copernicus"),
-    client_secret: str = typer.Option('lDluoPmsimOHBbu11RJWrypbyBLwaFGd', help="Client Secret da conta Copernicus"),
+    client_id: str = typer.Option('sh-780be612-cdd5-46c2-be80-016e3d9e3941', help="Client ID da conta Copernicus"),
+    client_secret: str = typer.Option('wNqrCLhYnogycEclvClgVfrCRzNxjzec', help="Client Secret da conta Copernicus"),
     output_dir: str = typer.Option("docker_copernicus\\imagens", help="Diretório de saída para salvar as imagens"),
     tile_size_km: float = typer.Option(16.0),
     tile_grid_path: str = typer.Option("docker_copernicus\\shapefile_ids\\grade_sentinel_brasil.shp")
@@ -316,6 +326,7 @@ def main(
 
     fetcher = SatelliteImageFetcher(copernicus_conn.get_connection())
     image_downloader = ImageDownloader(output_dir)
+
 
     if tile_id in ["Paraná", "parana"]:
         logging.info("Iniciando download para todos os tiles do Paraná...")
@@ -352,7 +363,7 @@ def main(
             bbox_height_km = ((maxy - miny) * 111)
             radius_km = max(bbox_width_km, bbox_height_km) / 2
 
-            tiles = divide_bbox(main_bbox, tile_size_km, lat, radius_km)
+            tiles = BBoxProcessor.divide_bbox(main_bbox, tile_size_km, lat, radius_km)
             
             image_downloader = ImageDownloader(tile_dir)
             images = []
@@ -381,7 +392,7 @@ def main(
 
             tile_mosaic_output = os.path.join(tile_dir, f"{satelite}_{tile}_{start_date}_{end_date}_mosaic.tif")
             if tile_files:
-                mosaic_tiles(tile_files, tile_mosaic_output)
+                TileMosaicker.mosaic_tiles(tile_files, tile_mosaic_output)
                 logging.info(f"Mosaico do tile {tile} criado: {tile_mosaic_output}")
                 tile_mosaic_files.append(tile_mosaic_output)
             else:
@@ -389,7 +400,7 @@ def main(
 
         if tile_mosaic_files:
             parana_mosaic_output = os.path.join(output_dir, f"{satelite}_Parana_mosaic_{start_date}_{end_date}_2.tif")
-            mosaic_tiles(tile_mosaic_files, parana_mosaic_output)
+            TileMosaicker.mosaic_tiles(tile_mosaic_files, parana_mosaic_output)
             logging.info(f"Mosaico final do Paraná criado em: {parana_mosaic_output}")
         else:
             logging.error("Nenhum mosaico foi criado para o Paraná.")
@@ -439,7 +450,7 @@ def main(
         logging.info(f"BBox principal: {main_bbox}")
 
         if radius_km >= 21:
-            tiles = divide_bbox(main_bbox, tile_size_km, lat, radius_km)
+            tiles = BBoxProcessor.divide_bbox(main_bbox, tile_size_km, lat, radius_km)
             logging.info(f"Área dividida em {len(tiles)} lotes")
 
             temp_files = []
@@ -492,7 +503,7 @@ def main(
             final_filepath = os.path.join(output_dir, final_filename)
 
             if temp_files:
-                mosaic_tiles(temp_files, final_filepath)
+                TileMosaicker.mosaic_tiles(temp_files, final_filepath)
                 logging.info(f"Mosaico final criado em: {final_filepath}")
             else:
                 logging.error("Nenhum arquivo de tile foi baixado com sucesso. Mosaico não criado.")
@@ -507,7 +518,7 @@ def main(
             else:
                 filename = f"{satelite}_{lat:.5f}_{lon:.5f}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
 
-            image_downloader.download(image, filename)
+            image_downloader.download(image, filename,delay=0)
 
 if __name__ == "__main__":
     app()
