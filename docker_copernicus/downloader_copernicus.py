@@ -82,7 +82,7 @@ class SatelliteImageFetcher:
                     max_cloud_cover=40,
                 )
 
-                image = image.resample_spatial(resolution=60)
+                image = image.resample_spatial(resolution=10)
                 image = image.reduce_dimension(dimension='t', reducer='median')
 
 
@@ -363,7 +363,8 @@ def main(
             bbox_height_km = ((maxy - miny) * 111)
             radius_km = max(bbox_width_km, bbox_height_km) / 2
 
-            tiles = BBoxProcessor.divide_bbox(main_bbox, tile_size_km, lat, radius_km)
+            processor = BBoxProcessor(main_bbox, tile_size_km, lat, radius_km)
+            tiles = processor.divide_bbox()
             
             image_downloader = ImageDownloader(tile_dir)
             images = []
@@ -392,7 +393,8 @@ def main(
 
             tile_mosaic_output = os.path.join(tile_dir, f"{satelite}_{tile}_{start_date}_{end_date}_mosaic.tif")
             if tile_files:
-                TileMosaicker.mosaic_tiles(tile_files, tile_mosaic_output)
+                processor_mosaic = TileMosaicker(tile_files, tile_mosaic_output)
+                processor_mosaic.mosaic_tiles()
                 logging.info(f"Mosaico do tile {tile} criado: {tile_mosaic_output}")
                 tile_mosaic_files.append(tile_mosaic_output)
             else:
@@ -400,7 +402,8 @@ def main(
 
         if tile_mosaic_files:
             parana_mosaic_output = os.path.join(output_dir, f"{satelite}_Parana_mosaic_{start_date}_{end_date}_2.tif")
-            TileMosaicker.mosaic_tiles(tile_mosaic_files, parana_mosaic_output)
+            processor_mosaic = TileMosaicker(tile_mosaic_files, parana_mosaic_output)
+            processor_mosaic.mosaic_tiles()
             logging.info(f"Mosaico final do Paraná criado em: {parana_mosaic_output}")
         else:
             logging.error("Nenhum mosaico foi criado para o Paraná.")
@@ -450,7 +453,8 @@ def main(
         logging.info(f"BBox principal: {main_bbox}")
 
         if radius_km >= 21:
-            tiles = BBoxProcessor.divide_bbox(main_bbox, tile_size_km, lat, radius_km)
+            processor = BBoxProcessor(main_bbox, tile_size_km, lat, radius_km)
+            tiles = processor.divide_bbox()
             logging.info(f"Área dividida em {len(tiles)} lotes")
 
             temp_files = []
@@ -503,7 +507,8 @@ def main(
             final_filepath = os.path.join(output_dir, final_filename)
 
             if temp_files:
-                TileMosaicker.mosaic_tiles(temp_files, final_filepath)
+                processor_mosaic = TileMosaicker(temp_files, final_filepath)
+                processor_mosaic.mosaic_tiles()
                 logging.info(f"Mosaico final criado em: {final_filepath}")
             else:
                 logging.error("Nenhum arquivo de tile foi baixado com sucesso. Mosaico não criado.")
