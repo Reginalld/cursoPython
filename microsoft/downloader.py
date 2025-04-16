@@ -32,7 +32,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("microsoft/log/brazil_data_cube_log.txt"),
+        logging.FileHandler("microsoft\\log\\brazil_data_cube_log.txt"),
         logging.StreamHandler()
     ]
 )
@@ -321,8 +321,8 @@ def main(
     radius_km: float = typer.Option(10.0, help="Raio da área de interesse em km"),
     start_date: str = typer.Argument(..., help="Data de início (YYYY-MM-DD)"),
     end_date: str = typer.Argument(..., help="Data final (YYYY-MM-DD)"),
-    output_dir: str = typer.Option("microsoft/images", help="Diretório de saída para salvar as imagens"),
-    tile_grid_path: str = typer.Option("microsoft/shapefile_ids/grade_sentinel_brasil.shp"),
+    output_dir: str = typer.Option("microsoft\\images", help="Diretório de saída para salvar as imagens"),
+    tile_grid_path: str = typer.Option("microsoft\\shapefile_ids\\grade_sentinel_brasil.shp"),
     max_cloud_cover: float = typer.Option(20.0, help="Máximo de nuvens")
 ):
     bdc_conn = BdcConnection()
