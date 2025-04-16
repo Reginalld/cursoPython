@@ -167,9 +167,9 @@ def merge_rgb_tif(r,g,b, output_path):
 
         # Salva o arquivo GeoTIFF
         with rasterio.open(output_path, 'w', **profile) as dst:
-            dst.write(rgb[0], 1)  # Escreve a banda vermelha
+            dst.write(rgb[2], 1)  # Escreve a banda vermelha
             dst.write(rgb[1], 2)  # Escreve a banda verde
-            dst.write(rgb[2], 3)  # Escreve a banda azul
+            dst.write(rgb[0], 3)  # Escreve a banda azul
 
         print(f"Imagem RGB GeoTIFF salva em: {output_path}")
 
@@ -342,9 +342,23 @@ def main(
                 logging.error(f"Tile {tile_id} não encontrado na grade Sentinel-2.")
                 raise ValueError("Tile ID inválido.")
 
-            tile_geometry = loads(tile_grid.geometry.iloc[0])
+            REDUCTION_FACTOR = 0.70
+
+            tile_geometry = tile_grid.geometry.iloc[0]
             minx, miny, maxx, maxy = tile_geometry.bounds
-            main_bbox = [minx, miny, maxx, maxy]
+
+            # Ajuste para reduzir a bounding box em um pequeno percentual
+            center_x = (minx + maxx) / 2
+            center_y = (miny + maxy) / 2
+            width = (maxx - minx) * REDUCTION_FACTOR
+            height = (maxy - miny) * REDUCTION_FACTOR
+
+            new_minx = center_x - (width / 2)
+            new_maxx = center_x + (width / 2)
+            new_miny = center_y - (height / 2)
+            new_maxy = center_y + (height / 2)
+
+            main_bbox = [new_minx, new_miny, new_maxx, new_maxy]
             lat = (maxy + miny) / 2
             lon = (maxx + minx) / 2
             bbox_width_km = ((maxx - minx) * 111 * math.cos(math.radians(lat)))
