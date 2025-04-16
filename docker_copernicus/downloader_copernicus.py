@@ -78,11 +78,11 @@ class SatelliteImageFetcher:
                     "SENTINEL2_L2A",
                     spatial_extent=bounding_box,
                     temporal_extent=[start_date, end_date],
-                    bands=["B02", "B03", "B04","B08"],
-                    max_cloud_cover=40,
+                    bands=["B04", "B03", "B02","B08"],
+                    max_cloud_cover=20,
                 )
 
-                image = image.resample_spatial(resolution=10)
+                image = image.resample_spatial(resolution=20)
                 image = image.reduce_dimension(dimension='t', reducer='median')
 
 
@@ -91,7 +91,7 @@ class SatelliteImageFetcher:
                     "SENTINEL2_L2A",
                     spatial_extent=bounding_box,
                     temporal_extent = [start_date, end_date],
-                    bands=["B02", "B03", "B04","B08"],
+                    bands=["B04", "B03", "B02","B08"],
                     max_cloud_cover=20,
 
                 )
@@ -300,10 +300,14 @@ app = typer.Typer()
 
 
 TILES_PARANA = [
-    "21JYM", "21JYN", "21KYP","22JBS","22JBT", "22KBU", "22KBV", "22JCS", "22JCT", 
+    "21JYM"
+]
+
+"""
+"21JYN", "21KYP","22JBS","22JBT", "22KBU", "22KBV", "22JCS", "22JCT", 
     "22KCU", "22KCV", "22JDS", "22JDT", "22KDU", "22KDV","22JES", "22JET", "22KEU", 
     "22KEV", "22JFS", "22JFT", "22KFU", "22JGS", "22JGT"
-]
+"""
 
 @app.command()
 
@@ -372,15 +376,20 @@ def main(
 
             for idx, tile_bbox in enumerate(tiles):
                 logging.info(f"Lote {idx+1}/{len(tiles)} do tile {tile}...")
-                
-                image = fetcher.fetch_image(satelite, tile_bbox, start_date, end_date)
-                if image is None:
-                    logging.warning(f"Nenhuma imagem encontrada para lote {idx+1}")
-                    continue
-                
+
+                # Busca a cena completa da área do tile (somente uma vez)
+                if idx == 0:
+                    big_cube = fetcher.fetch_image(satelite, main_bbox, start_date, end_date)
+                    if big_cube is None:
+                        logging.warning(f"Nenhuma imagem encontrada para o tile {tile}")
+                        break
+
+                # Faz o recorte virtual da cena com base no sub-bbox
+                sub_cube = big_cube.filter_bbox(tile_bbox)
+
                 tile_filename = f"{satelite}_{tile}_{lat:.5f}_{lon:.5f}_tile_{idx+1}_{radius_km:.2f}km_{start_date}_{end_date}.tif"
                 filenames.append(tile_filename)
-                images.append(image)
+                images.append(sub_cube)
 
             if images:
                 image_downloader.download_async(images, filenames)
