@@ -2,7 +2,10 @@ sentinel_log.txt
 api_key_test.json
 copernicus_log.txt
 imagens/
+images_analises/
 log/
 images/
 shapefile/
 shapefile_ids/
+falhas_download.csv
+tempo_downloads.csv

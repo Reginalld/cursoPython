@@ -2,29 +2,25 @@ import pystac_client
 import os
 from urllib.parse import urlparse
 import requests
-from pystac import Asset
 from tqdm import tqdm
-import os
-from urllib.parse import urlparse
 import numpy as np
 import requests
 import rasterio
 from rasterio.plot import reshape_as_image
-from pystac import Asset
-from tqdm import tqdm
-from PIL import Image
 import logging
 import math
 import typer
 from shapely.wkt import loads
 import geopandas as gpd
-import re
 import subprocess
 from rasterio.merge import merge
+import time
+from shapely.geometry import shape
+import csv
+from datetime import datetime
+import pandas as pd
 
-
-
-
+LOG_CSV_PATH = "brazil_data_cube/falhas_download.csv"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,42 +65,104 @@ class SatelliteImageFetcher:
     def __init__(self, connection):
         self.connection = connection
     
-    def fetch_image(self, satelite, bounding_box, start_date, end_date, max_cloud_cover):
+    def fetch_image(self, satelite, bounding_box, start_date, end_date, max_cloud_cover,tile_grid_path,tile):
         try:
-            # <CollectionClient id=S2-16D-2>
-            # <CollectionClient id=S2_L2A_BUNDLE-1>
-            # <CollectionClient id=S2_L2A-1>
-            # <CollectionClient id=S2_L1C_BUNDLE-1>
             logging.info(f"Buscando imagens do {satelite}...")
+
+            filt = None
             if satelite == 'S2_L2A-1':
-                filt = {"op": "lte", "args": [{"property": "eo:cloud_cover"}, max_cloud_cover]}
-                image = self.connection.search(bbox=bounding_box,
-                                datetime=[start_date,end_date],
-                                collections=['S2_L2A-1'],
-                                filter=filt)
+                filt = {
+                    "op": "and",
+                    "args": [
+                        {"op": "lte", "args": [{"property": "eo:cloud_cover"}, max_cloud_cover]},
+                        {"op": "gte", "args": [{"property": "eo:cloud_cover"}, 10]},
+                    ],
+                }
             elif satelite == 'S2-16D-2':
                 filt = {"op": "lte", "args": [{"property": "eo:cloud_cover"}, max_cloud_cover]}
-                image = self.connection.search(bbox=bounding_box,
-                                datetime=[start_date,end_date],
-                                collections=['S2-16D-2'],
-                                filter=filt)
             else:
                 logging.warning(f"Satélite {satelite} não suportado!")
                 raise ValueError("Satélite não suportado.")
-            
-            best_image = None
-            best_cloud_cover = 100
 
-            for item in image.items():
-                cloud_cover = item.properties.get("eo:cloud_cover", 100)
-                if cloud_cover < best_cloud_cover:
-                    best_cloud_cover = cloud_cover
-                    best_image = item.assets
+            search_result = self.connection.search(
+                bbox=bounding_box,
+                datetime=[start_date, end_date],
+                collections=[satelite],
+                filter=filt
+            )
 
-            return best_image
+            items = list(search_result.items())
+
+            if tile is not None:
+                if not items:
+                    erro_msg = f"Sem imagem disponível para os parâmetros fornecidos do id {tile}"
+                    logging.error(erro_msg)
+                    log_error_csv(tile, satelite, erro_msg)
+                    return None
+                if satelite == 'S2_L2A-1':
+                    items = [
+                        item for item in items
+                        if is_good_geometry(item,tile_grid_path,tile)
+                    ]
+                if not items:
+                    erro_msg = f"Nenhuma imagem passou do filtro de geometria para o tile: {tile}."
+                    logging.error(erro_msg)
+                    log_error_csv(tile, satelite, erro_msg)
+                    return None
+            else:
+                if not items:
+                    logging.error("Sem imagem disponível para os parâmetros fornecidos")
+                    return None
+
+            # Ordena pela menor cobertura de nuvem
+            items = sorted(items, key=lambda item: item.properties['eo:cloud_cover'])
+            # Seleciona o melhor item
+            best_item = items[0]
+            cloud_cover = best_item.properties['eo:cloud_cover']
+            logging.info(f"Imagem selecionada com {cloud_cover}% de nuvem.")
+
+            return best_item.assets
+
         except Exception as e:
+            erro_msg = str(e)
             logging.error(f"Erro ao obter imagem do {satelite}: {e}", exc_info=True)
+            log_error_csv(tile, satelite, erro_msg)
             return None
+
+def is_good_geometry(item,tile_grid_path,tile_id):
+    tiles_gdf = gpd.read_file(tile_grid_path)
+
+    tile_row = tiles_gdf[tiles_gdf["NAME"] == tile_id]
+    if tile_row is None:
+        return False
+    
+    tile_geom = tile_row.iloc[0].geometry
+    item_geom = shape(item.geometry)
+
+    intersection = tile_geom.intersection(item_geom)
+
+    if intersection.area / tile_geom.area >= 0.80:
+        return True
+    return False
+
+
+def log_error_csv(tile, satelite, erro_msg):
+    os.makedirs(os.path.dirname(LOG_CSV_PATH), exist_ok=True)
+    file_exists = os.path.isfile(LOG_CSV_PATH)
+
+    with open(LOG_CSV_PATH, mode="a", newline="", encoding='utf-8') as csvfile:
+        fieldnames = ["Data", "Tile_id", "Satelite", "Erro"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, dialect='excel')
+
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow({
+            "Data": datetime.now().isoformat(timespec='seconds'),
+            "Tile_id": tile,
+            "Satelite": satelite,
+            "Erro": erro_msg
+        })
         
 class ImagemDownloader:
     def __init__(self, output_dir):
@@ -138,38 +196,67 @@ class ImagemDownloader:
                 logging.error(f"Erro ao fazer download da imagem: {str(e)}")
                 raise RuntimeError("Erro ao fazer download da imagem", e)
         
-def merge_rgb_tif(r,g,b, output_path):
+def merge_rgb_tif(r,g,b, output_path,satelite):
     """Combina as bandas R, G e B e salva como um arquivo GeoTIFF."""
     with rasterio.open(r) as red, \
          rasterio.open(g) as green, \
          rasterio.open(b) as blue:
         
-        # Lê os dados das bandas
-        r = red.read(1)
-        g = green.read(1)
-        b = blue.read(1)
+        # Lê bandas e converte 0 para np.nan
+        r = red.read(1).astype(float)
+        g = green.read(1).astype(float)
+        b = blue.read(1).astype(float)
+        r[r == 0] = np.nan
+        g[g == 0] = np.nan
+        b[b == 0] = np.nan
 
-        # Normaliza para 0-255
-        def normalize(band):
-                p2, p98 = np.percentile(band, (2, 98))  # Remove valores extremos
-                band = np.clip(band, p2, p98)  # Recorta valores fora do intervalo
-                return ((band - band.min()) / (band.max() - band.min()) * 255).astype(np.uint8)
+        def normalize_soft(array):
+            """Normalização min-max suave (usada pelo S2-16D-2)"""
+            array_min, array_max = array.min(), array.max()
+            if array_max - array_min == 0:
+                return np.zeros_like(array, dtype=np.uint8)
+            return ((array - array_min) / (array_max - array_min) * 255).astype(np.uint8)
 
-        rgb = np.stack([normalize(r), normalize(g), normalize(b)], axis=0)  # Formato (3, altura, largura)
+        def normalize_percentile(array):
+            """Normalização com recorte de extremos (usada pelo S2_L2A-1)"""
+            p2, p98 = np.percentile(array, (2, 98))
+            array = np.clip(array, p2, p98)
+            if array.max() - array.min() == 0:
+                return np.zeros_like(array, dtype=np.uint8)
+            return ((array - array.min()) / (array.max() - array.min()) * 255).astype(np.uint8)
+
+        # Escolhe a função de normalização com base no satélite
+        if satelite == 'S2-16D-2':
+            norm = normalize_soft
+        else:  # padrão: normalização com percentis
+            norm = normalize_percentile
+
+        r_norm = norm(r)
+        g_norm = norm(g)
+        b_norm = norm(b)
+
+        nan_mask = np.isnan(r) | np.isnan(g) | np.isnan(b)
+
+        r_norm[nan_mask] = 0
+        g_norm[nan_mask] = 0
+        b_norm[nan_mask] = 0
+
+        # Empilha RGB
+        rgb = np.stack([r_norm, g_norm, b_norm], axis=0)
 
         # Cria metadados para o novo arquivo
         profile = red.profile
         profile.update(
-            count=3,  # Três bandas (RGB)
-            dtype=rasterio.uint8,  # Salvar como uint8 para imagens coloridas
-            driver="GTiff"  # Formato GeoTIFF
+            count=3,
+            dtype=rasterio.uint8,
+            driver="GTiff"
         )
 
         # Salva o arquivo GeoTIFF
         with rasterio.open(output_path, 'w', **profile) as dst:
-            dst.write(rgb[2], 1)  # Escreve a banda vermelha
-            dst.write(rgb[1], 2)  # Escreve a banda verde
-            dst.write(rgb[0], 3)  # Escreve a banda azul
+            dst.write(rgb[0], 1)
+            dst.write(rgb[1], 2)
+            dst.write(rgb[2], 3)
 
         print(f"Imagem RGB GeoTIFF salva em: {output_path}")
 
@@ -252,11 +339,11 @@ def mosaic_tiles(tile_files, output_path):
 app = typer.Typer()
 
 TILES_PARANA = [
-    "21JYM", "21JYN", "21KYP","22JBS","22JBT"
+    "21JYM", "21JYN", "21KYP","22JBS"
 ]
 
 """
-"22KBU","22KBV", "22JCS", "22JCT", 
+,"22JBT","22KBU","22KBV", "22JCS", "22JCT", 
     "22KCU", "22KCV", "22JDS", "22JDT", "22KDU", "22KDV","22JES", "22JET", "22KEU", 
     "22KEV", "22JFS", "22JFT", "22KFU", "22JGS", "22JGT"
 """
@@ -283,7 +370,11 @@ def main(
         logging.info("Iniciando todos os downloads do Paraná")
 
         tile_mosaic_files = []
+        results_time_estimated = []
         for tile in TILES_PARANA:
+
+            start = time.perf_counter()
+
             logging.info(f"Processando tile {tile}...")
             tile_grid = gpd.read_file(tile_grid_path)
             tile_grid = tile_grid[tile_grid["NAME"] == tile]
@@ -293,7 +384,7 @@ def main(
                 continue
 
            # Fator de redução para diminuir a bounding box (exemplo: reduzir em 2% para evitar margens excessivas)
-            REDUCTION_FACTOR = 0.70
+            REDUCTION_FACTOR = 0.2
 
             tile_geometry = tile_grid.geometry.iloc[0]
             minx, miny, maxx, maxy = tile_geometry.bounds
@@ -313,7 +404,7 @@ def main(
 
             logging.info(f"Main_bbox ajustado: {main_bbox} do tile: {tile}")
 
-            image_assets = fetcher.fetch_image(satelite, main_bbox, start_date, end_date, max_cloud_cover)
+            image_assets = fetcher.fetch_image(satelite, main_bbox, start_date, end_date, max_cloud_cover,tile_grid_path,tile)
             if not image_assets:
                 logging.warning(f"Nenhuma imagem encontrada para tile {tile}.")
                 continue
@@ -323,10 +414,27 @@ def main(
             g = image_downloader.download(image_assets['B03'], f"{satelite}_{tile}_{start_date}_{end_date}_green")
             b = image_downloader.download(image_assets['B02'], f"{satelite}_{tile}_{start_date}_{end_date}_blue")
             tile_mosaic_output = os.path.join(output_dir, f"{satelite}_{tile}_{start_date}_{end_date}_RGB.tif")
-            merge_rgb_tif(r, g, b, tile_mosaic_output)
+            merge_rgb_tif(r, g, b, tile_mosaic_output,satelite)
             tile_mosaic_files.append(tile_mosaic_output)
 
+            duration = time.perf_counter() - start
+            results_time_estimated.append({
+                "tile_id": tile,
+                "duration_sec": duration
+
+            })
+
         if tile_mosaic_files:
+
+            df = pd.DataFrame(results_time_estimated)
+            df.to_csv("brazil_data_cube/tempo_downloads.csv", index=False)
+
+            media = df["duration_sec"].mean()
+            estimativa_total = media * len(TILES_PARANA)
+
+            print(f"Média por quadrante: {media:.2f} segundos")
+            print(f"Estimativa total ({len(TILES_PARANA)} quadrantes): {estimativa_total/60:.2f} minutos")
+
             parana_mosaic_output = os.path.join(output_dir, f"{satelite}_Parana_mosaic_{start_date}_{end_date}.tif")
             mosaic_tiles(tile_mosaic_files, parana_mosaic_output)
             logging.info(f"Mosaico final do Paraná criado em: {parana_mosaic_output}")
@@ -342,12 +450,10 @@ def main(
                 logging.error(f"Tile {tile_id} não encontrado na grade Sentinel-2.")
                 raise ValueError("Tile ID inválido.")
 
-            REDUCTION_FACTOR = 0.70
-
+            REDUCTION_FACTOR = 0.2
             tile_geometry = tile_grid.geometry.iloc[0]
             minx, miny, maxx, maxy = tile_geometry.bounds
 
-            # Ajuste para reduzir a bounding box em um pequeno percentual
             center_x = (minx + maxx) / 2
             center_y = (miny + maxy) / 2
             width = (maxx - minx) * REDUCTION_FACTOR
@@ -359,6 +465,7 @@ def main(
             new_maxy = center_y + (height / 2)
 
             main_bbox = [new_minx, new_miny, new_maxx, new_maxy]
+
             lat = (maxy + miny) / 2
             lon = (maxx + minx) / 2
             bbox_width_km = ((maxx - minx) * 111 * math.cos(math.radians(lat)))
@@ -373,7 +480,10 @@ def main(
             raise ValueError("Faltam parâmetros para definir a área de interesse.")
 
         logging.info(f"BBox principal: {main_bbox}")
-        image_assets = fetcher.fetch_image(satelite, main_bbox, start_date, end_date, max_cloud_cover)
+        if tile_id:
+            image_assets = fetcher.fetch_image(satelite, main_bbox, start_date, end_date, max_cloud_cover,tile_grid_path,tile_id)
+        else:
+            image_assets = fetcher.fetch_image(satelite, main_bbox, start_date, end_date, max_cloud_cover,tile_grid_path,tile="")
         if not image_assets:
             logging.warning("Nenhuma imagem encontrada")
             return
@@ -383,7 +493,7 @@ def main(
         g = image_downloader.download(image_assets['B03'], f"{radius_km}_{satelite}_{lat}_{lon}_{start_date}_{end_date}_green")
         b = image_downloader.download(image_assets['B02'], f"{radius_km}_{satelite}_{lat}_{lon}_{start_date}_{end_date}_blue")
         output_path = os.path.join(output_dir, f"{radius_km}_{satelite}_{lat}_{lon}_{start_date}_{end_date}_RGB.tif")
-        merge_rgb_tif(r, g, b, output_path)
+        merge_rgb_tif(r, g, b, output_path,satelite)
 
 if __name__ == "__main__":
     app()
