@@ -1,0 +1,41 @@
+Nome,Tipo,Descrição,Unidade
+datetime,string (ISO),Data e hora do centro da aquisição da imagem,ISO 8601 (UTC)
+start_datetime,string (ISO),Início da aquisição da imagem,ISO 8601 (UTC)
+end_datetime,string (ISO),Fim da aquisição da imagem,ISO 8601 (UTC)
+created,string (ISO),Data de criação do registro no catálogo,ISO 8601 (UTC)
+updated,string (ISO),Data da última atualização do registro,ISO 8601 (UTC)
+Id,string (UUID),Identificador único da cena no catálogo,—
+Name,string,Nome completo do produto SAFE,—
+link,string (URL),Link de download da imagem,—
+Online,boolean,Indica se o arquivo está disponível online,—
+S3Path,string,Caminho no bucket S3 da Copernicus Data Space,—
+origin,string,Origem do produto,—
+tileId,string,ID do tile Sentinel-2 (MGRS),—
+Checksum,lista,"Lista de verificações de integridade (MD5, BLAKE3)",—
+scene_id,string,ID da cena completo,—
+Footprint,string (WKT),Polígono da cobertura geográfica da cena (WKT),graus (EPSG:4326)
+GeoFootprint,GeoJSON,Geometria da área coberta (formato GeoJSON),graus (EPSG:4326)
+cloudCover / eo:cloud_cover,float,Percentual de cobertura de nuvens estimada,fração (0–1)
+ContentDate,dict,Data de início e fim do conteúdo da cena,ISO 8601 (UTC)
+ContentType,string,Tipo MIME do conteúdo,—
+ContentLength,inteiro,Tamanho do arquivo,bytes
+sourceProduct,string,Produtos fontes utilizados na geração do produto,—
+processingDate,string (ISO),Data de processamento do produto,ISO 8601 (UTC)
+productType,string,"Tipo do produto (ex: S2MSI2A = Sentinel-2, MSI, Nível 2A)",—
+processingLevel,string,Nível de processamento (ex: L2A – com correção atmosférica),—
+processorVersion,string,Versão do processador ESA,—
+platformShortName,string,Nome da missão (ex: SENTINEL-2),—
+platformSerialIdentifier,string,Satélite específico (ex: A ou C),—
+instrumentShortName,string,Instrumento utilizado (ex: MSI),—
+orbitNumber,inteiro,Número da órbita do satélite,—
+relativeOrbitNumber,inteiro,Órbita relativa da cena,—
+granuleIdentifier,string,Identificador do granulado (tile + órbita),—
+operationalMode,string,Modo de operação do satélite,—
+bdc:tiles,lista,Tiles (MGRS) associados segundo o Brazil Data Cube,—
+transform,Affine,Matriz de transformação do raster,metros
+crs,CRS (WKT),Sistema de referência espacial (ex: EPSG:32722 - UTM zona 22S),—
+width,inteiro,Largura da imagem em pixels,pixels
+height,inteiro,Altura da imagem em pixels,pixels
+count,inteiro,Número de bandas no raster carregado (ex: 3 para RGB),—
+dtype,string,Tipo de dado das bandas (ex: uint8),—
+nodata,variável,Valor que representa ausência de dado (null se não definido),—
