@@ -8,4 +8,6 @@ images/
 shapefile/
 shapefile_ids/
 falhas_download.csv
-tempo_downloads.csv
+tempo_downloads**
+__pycache__/
+.pytest_cache/
