@@ -6,17 +6,25 @@ import subprocess
 import os
 import time
 import logging
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
 class MosaicGenerator:
-    def __init__(self, common_crs="EPSG:32721"):
+    def __init__(self, common_crs: str = "EPSG:32721"):
         self.common_crs = common_crs
 
-    def mosaic_tiles(self, tile_files, output_path):
+    def mosaic_tiles(self, tile_files: List[str], output_path: str) -> Optional[str]:
         """
         Cria um mosaico a partir de múltiplos arquivos GeoTIFF.
-        Se necessário, reprojeta os arquivos para o CRS comum.
+        No caso do merge, é necessário que todos os arquivos tenham o mesmo CRS, caso não tenham, será feita uma reprojeção para algum CRS comum
+        
+        Args:
+            tile_files (List[str]): Lista de caminhos dos tiles
+            output_path (str): Caminho para salvar o mosaico
+
+        Returns:
+            Optional[str]: Caminho do mosaico criado ou None se falhar
         """
         src_files = []
         band_count = None

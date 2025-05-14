@@ -5,15 +5,28 @@ import rasterio
 from rasterio.plot import reshape_as_image
 import logging
 import math
+from typing import Optional
+
 
 logger = logging.getLogger(__name__)
 
 class ImageProcessor:
-    def __init__(self, satelite):
+    def __init__(self, satelite: str):
         self.satelite = satelite
 
-    def merge_rgb_tif(self, r, g, b, output_path):
-        """Combina as bandas R, G e B e salva como um arquivo GeoTIFF."""
+    def merge_rgb_tif(self, r: str, g: str, b: str, output_path: str) -> str:
+        """
+        Mescla bandas R, G e B em um único GeoTIFF RGB.
+        
+        Args:
+            r (str): Caminho da banda vermelha
+            g (str): Caminho da banda verde
+            b (str): Caminho da banda azul
+            output_path (str): Caminho para salvar imagem final
+
+        Returns:
+            str: Caminho do arquivo salvo
+        """
         logger.info(f"Mesclando bandas RGB para: {output_path}")
 
         with rasterio.open(r) as red, \

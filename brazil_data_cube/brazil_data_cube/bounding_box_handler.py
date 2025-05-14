@@ -5,15 +5,24 @@ import logging
 from .config import REDUCTION_FACTOR
 import os
 
+from typing import List, Optional, Tuple
+
+
 logger = logging.getLogger(__name__)
 
 class BoundingBoxHandler:
-    def __init__(self, reduction_factor=REDUCTION_FACTOR):
+    def __init__(self, reduction_factor: float = 0.2):
         self.reduction_factor = reduction_factor
 
-    def calcular_bbox_reduzido(self, tile_grid):
+    def calcular_bbox_reduzido(self, tile_grid: any) -> List[float]:
         """
         Calcula uma bounding box reduzida com base na geometria do tile.
+        
+        Args:
+            tile_grid (GeoDataFrame): Geometria do tile
+            
+        Returns:
+            List[float]: [minx, miny, maxx, maxy] da nova bbox
         """
         tile_geometry = tile_grid.geometry.iloc[0]
         minx, miny, maxx, maxy = tile_geometry.bounds
@@ -31,9 +40,21 @@ class BoundingBoxHandler:
         logger.info(f"Main_bbox ajustado: [{new_minx}, {new_miny}, {new_maxx}, {new_maxy}]")
         return [new_minx, new_miny, new_maxx, new_maxy]
 
-    def obter_bounding_box(self, tile_id, lat, lon, radius_km, tile_grid_path):
+    def obter_bounding_box(self, tile_id: Optional[str], lat: Optional[float],
+                           lon: Optional[float], radius_km: float,
+                           tile_grid_path: str) -> Tuple[List[float], float, float, float]:
         """
         Gera uma bounding box com base em tile_id ou coordenadas.
+        
+        Args:
+            tile_id (Optional[str]): ID do tile (ex: '21JYM')
+            lat (Optional[float]): Latitude central
+            lon (Optional[float]): Longitude central
+            radius_km (float): Raio em km
+            tile_grid_path (str): Caminho do shapefile com grade
+
+        Returns:
+            Tuple[List[float], float, float, float]: BBox, lat_final, lon_final, radius_final
         """
         if tile_id:
             import geopandas as gpd

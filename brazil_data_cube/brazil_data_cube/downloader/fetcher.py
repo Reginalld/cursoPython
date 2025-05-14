@@ -3,14 +3,33 @@
 import logging
 from ..logger import ResultManager
 from ..config import TILES_PARANA
+from typing import Optional, Dict, Any
+
 
 logger = logging.getLogger(__name__)
 
 class SatelliteImageFetcher:
-    def __init__(self, connection):
+    def __init__(self, connection: any):
         self.connection = connection
 
-    def fetch_image(self, satelite, bounding_box, start_date, end_date, max_cloud_cover, tile_grid_path, tile):
+    def fetch_image(self, satelite: str, bounding_box: list, start_date: str,
+                    end_date: str, max_cloud_cover: float, tile_grid_path: str,
+                    tile: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        Busca uma imagem usando filtro de nuvem e geometria.
+        
+        Args:
+            satelite (str): Nome do satélite
+            bounding_box (list): Coordenadas [minx, miny, maxx, maxy]
+            start_date (str): Data início YYYY-MM-DD
+            end_date (str): Data fim YYYY-MM-DD
+            max_cloud_cover (float): Máximo de cobertura de nuvem (%)
+            tile_grid_path (str): Caminho do shapefile de tiles
+            tile (Optional[str]): ID do tile (opcional)
+
+        Returns:
+            Optional[Dict]: Assets da imagem ou None se não encontrar
+        """
         try:
             logger.info(f"Buscando imagens do {satelite}...")
 

@@ -6,13 +6,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 class BdcConnection:
-    def __init__(self, endpoint="https://data.inpe.br/bdc/stac/v1/"):
+    def __init__(self, endpoint: str ="https://data.inpe.br/bdc/stac/v1/"):
         self.endpoint = endpoint
         self.connection = None
         logger.info("BdcConnection inicializado.")
 
     def initialize(self):
-        """Inicializa a conexão com o BDC."""
+        """
+        Inicializa uma conexão com o Brazil Data Cube STAC API.
+        
+        Args:
+            endpoint (str): URL do servidor STAC
+        """
         try:
             logger.info("Conectando ao Brazil Data Cube...")
             self.connection = pystac_client.Client.open(self.endpoint)

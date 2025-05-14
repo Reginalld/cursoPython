@@ -4,18 +4,20 @@ import time
 import logging
 import geopandas as gpd
 from .config import TILES_PARANA
+from .config import SAT_SUPPORTED
 from .bounding_box_handler import BoundingBoxHandler
 from .logger import ResultManager
 from brazil_data_cube.processors.image_processor import ImageProcessor
 from brazil_data_cube.processors.mosaic_generator import MosaicGenerator
 import os
+from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
 class TileProcessor:
-    SAT_SUPPORTED = ['S2_L2A-1', 'S2-16D-2']
 
-    def __init__(self, fetcher, downloader, output_dir, tile_grid_path, max_cloud_cover):
+    def __init__(self, fetcher: any, downloader: any, output_dir: str,
+                 tile_grid_path: str, max_cloud_cover: float):
         self.fetcher = fetcher
         self.downloader = downloader
         self.output_dir = output_dir
@@ -26,8 +28,16 @@ class TileProcessor:
         self.image_processor = ImageProcessor(satelite="")  # Será redefinido na execução
         self.mosaic_generator = MosaicGenerator()
 
-    def processar_tiles_parana(self, satelite, start_date, end_date):
-        if satelite not in self.SAT_SUPPORTED:
+    def processar_tiles_parana(self, satelite: str, start_date: str, end_date: str) -> None:
+        """
+        Processa todos os tiles do Paraná, baixa e monta o mosaico final.
+        
+        Args:
+            satelite (str): Nome do satélite
+            start_date (str): Data de início (YYYY-MM-DD)
+            end_date (str): Data final (YYYY-MM-DD)
+        """
+        if satelite not in SAT_SUPPORTED:
             logger.error(f"Satélite '{satelite}' não é suportado.")
             self.result_manager.log_error_csv("Paraná", satelite, "Satélite não suportado")
             return

@@ -9,6 +9,7 @@ from .config import TILES_PARANA
 from .processors.mosaic_generator import MosaicGenerator  
 import pandas as pd 
 from pathlib import Path
+from typing import List, Dict, Any
 
 
 logger = logging.getLogger(__name__)
@@ -18,8 +19,15 @@ class ResultManager:
         pass
 
     @staticmethod
-    def log_error_csv(tile, satelite, erro_msg):
-        """Registra erros no CSV de falhas."""
+    def log_error_csv(tile: str, satelite: str, erro_msg: str) -> None:
+        """
+        Registra erros no CSV de falhas.
+        
+        Args:
+            tile (str): Tile ou região afetada
+            satelite (str): Nome do satélite
+            erro_msg (str): Mensagem de erro detalhada
+        """
         os.makedirs(os.path.dirname(LOG_CSV_PATH), exist_ok=True)
         file_exists = os.path.isfile(LOG_CSV_PATH)
 
@@ -40,9 +48,20 @@ class ResultManager:
             logger.info(f"Erro registrado no CSV: {tile} - {satelite}")
         except Exception as e:
             logger.critical(f"Falha ao gravar no CSV de erros: {e}")
-
-    def gerenciar_resultados(self, tile_mosaic_files, results_time_estimated, output_dir, satelite, start_date, end_date):
-        """Gera relatórios de tempo e cria mosaico final se aplicável."""
+            
+    def gerenciar_resultados(self, tile_mosaic_files: List[str], results_time_estimated: List[Dict[str, float]],
+                            output_dir: str, satelite: str, start_date: str, end_date: str) -> None:
+        """
+        Gera relatórios de tempo e cria mosaico final se aplicável.
+        
+        Args:
+            tile_mosaic_files (List[str]): Lista de caminhos das imagens processadas
+            results_time_estimated (List[Dict]): Lista com duração de downloads
+            output_dir (str): Pasta onde salvar resultados
+            satelite (str): Nome do satélite usado
+            start_date (str): Data inicial do download
+            end_date (str): Data final do download
+        """
         if not tile_mosaic_files:
             logger.error("Nenhum mosaico foi criado para o Paraná.")
             return
@@ -87,7 +106,7 @@ class ResultManager:
         print(f"Estimativa total ({len(TILES_PARANA)} quadrantes): {estimativa_total:.2f} minutos")
         print(f"CSV salvo em: {csv_path}")
 
-def setup_logger(log_file="brazil_data_cube/log/brazil_data_cube_log.txt"):
+def setup_logger(log_file="brazil_data_cube\\log\\brazil_data_cube_log.txt"):
     """Configura o sistema de logging para console e arquivo."""
     log_path = Path(log_file)
     log_path.parent.mkdir(exist_ok=True)

@@ -4,19 +4,33 @@ import os
 import requests
 from tqdm import tqdm
 import logging
+from typing import Optional
+
 
 logger = logging.getLogger(__name__)
 
 class ImagemDownloader:
-    def __init__(self, output_dir):
+    def __init__(self, output_dir: str):
         self.output_dir = output_dir
         self.create_output()
 
-    def create_output(self):
+    def create_output(self) -> None:
+        """Cria diretório de saída se ele não existir."""
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Diretório de saída criado em: {self.output_dir}")
 
-    def download(self, asset, filename, request_options={}):
+    def download(self, asset: dict, filename: str, request_options: dict = {}) -> Optional[str]:
+        """
+        Baixa um asset usando requisição HTTP.
+        
+        Args:
+            asset (dict): Asset do catálogo STAC
+            filename (str): Nome do arquivo a ser salvo
+            request_options (dict): Opções adicionais para o request
+
+        Returns:
+            Optional[str]: Caminho do arquivo baixado ou None se falhar
+        """
         try:
             if asset is None:
                 logger.error("Tentativa de download com asset inválido.")
