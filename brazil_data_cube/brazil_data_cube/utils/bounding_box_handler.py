@@ -2,7 +2,7 @@
 
 import math
 import logging
-from .config import REDUCTION_FACTOR
+from ..config import REDUCTION_FACTOR
 import os
 
 from typing import List, Optional, Tuple

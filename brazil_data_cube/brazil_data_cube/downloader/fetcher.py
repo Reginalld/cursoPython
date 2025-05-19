@@ -1,7 +1,7 @@
 # brazil_data_cube/downloader/fetcher.py
 
 import logging
-from ..logger import ResultManager
+from ..utils.logger import ResultManager
 from ..config import TILES_PARANA
 from typing import Optional, Dict, Any
 
@@ -50,7 +50,7 @@ class SatelliteImageFetcher:
                     ResultManager().log_error_csv(tile, satelite, "Nenhuma imagem encontrada.")
                     return None
 
-                from ..downloader.geometry_utils import GeometryUtils
+                from ..utils.geometry_utils import GeometryUtils
                 geometry_utils = GeometryUtils(tile_grid_path)
                 items = [item for item in items if geometry_utils.is_good_geometry(item, tile)]
 

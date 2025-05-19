@@ -25,10 +25,18 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("brazil_data_cube\\log\\brazil_data_cube_log.txt"),
+        logging.FileHandler("brazil_data_cube_estudos\\log\\brazil_data_cube_log.txt"),
         logging.StreamHandler()
     ]
 )
+
+
+TILES_PARANA = [
+    "21JYM","21JYN", "21KYP","22JBS","22JBT","22KBU","22KBV","22JCS", "22JCT", "22KCU", "22KCV", "22JDS",
+"22JDT", "22KDU", "22KDV","22JES", "22JET", "22KEU", 
+    "22KEV", "22JFS", "22JFT", "22KFU", "22JGS", "22JGT"
+]
+
 
 class BdcConnection:
     def __init__(self):
@@ -267,18 +275,78 @@ def mosaic_tiles(tile_files, output_path):
     logging.info(f"Mosaico salvo em: {output_path}")
     return output_path
         
+def obter_bbox_e_centro(tile_id, tile_grid_path, radius_km):
+    logging.info(f"Buscando geometria para o tile {tile_id} na grade do Sentinel-2...")
+    tile_grid = gpd.read_file(tile_grid_path)
+    tile_grid = tile_grid[tile_grid["NAME"] == tile_id]
+
+    if tile_grid.empty:
+        logging.error(f"Tile {tile_id} não encontrado na grade Sentinel-2.")
+        raise ValueError("Tile ID inválido.")
+
+    REDUCTION_FACTOR = 0.2
+    tile_geometry = tile_grid.geometry.iloc[0]
+    minx, miny, maxx, maxy = tile_geometry.bounds
+
+    center_x = (minx + maxx) / 2
+    center_y = (miny + maxy) / 2
+    width = (maxx - minx) * REDUCTION_FACTOR
+    height = (maxy - miny) * REDUCTION_FACTOR
+
+    new_minx = center_x - (width / 2)
+    new_maxx = center_x + (width / 2)
+    new_miny = center_y - (height / 2)
+    new_maxy = center_y + (height / 2)
+
+    bbox = [new_minx, new_miny, new_maxx, new_maxy]
+
+    lat = center_y
+    lon = center_x
+    bbox_width_km = ((maxx - minx) * 111 * math.cos(math.radians(lat)))
+    bbox_height_km = ((maxy - miny) * 111)
+    radius_km = max(bbox_width_km, bbox_height_km) / 2
+
+    return bbox, lat, lon, radius_km
+
+
+def processar_e_baixar_imagens(image_assets, radius_km, satelite, lat, lon, start_date, end_date, output_dir, image_downloader):
+    metadados_coletados = []
+
+    for idx, images in enumerate(image_assets):
+        logging.info(images.properties)
+        base_name = f"{radius_km:.2f}KM_{satelite}_lat{lat:.4f}_lon{lon:.4f}_{start_date}_{end_date}"
+        
+        r = image_downloader.download(images.assets['B04'], f"{base_name}_red")
+        g = image_downloader.download(images.assets['B03'], f"{base_name}_green")
+        b = image_downloader.download(images.assets['B02'], f"{base_name}_blue")
+        
+        output_path = os.path.join(output_dir, f"Quadrante_{idx+1}_{base_name}_RGB.tif")
+        merge_rgb_tif(r, g, b, output_path, satelite)
+        
+        props = images.properties
+        metadados_coletados.append({
+            "quadrante": idx + 1,
+            "data": props.get("created", "")[:10],
+            "cloud_cover": props.get("eo:cloud_cover", None),
+            "tile_id": props.get("tileId", ""),
+            "satelite": satelite,
+            "produto": props.get("platformShortName", ""),
+            "Tamanho": props.get("ContentLength", ""),
+            "sensor": props.get("instrumentShortName", ""),
+            "Polygons": props.get("Footprint", ""), 
+            "path_tif": str(output_path)
+        })
+
+    return metadados_coletados
+
+
+def salvar_metadados_csv(metadados, output_dir, satelite, start_date, end_date):
+    df = pd.DataFrame(metadados)
+    csv_path = os.path.join(output_dir, f"resumo_metadados_{satelite}_{start_date}_{end_date}.csv")
+    df.to_csv(csv_path, index=False, sep=";", encoding="utf-8-sig", float_format="%.2f")
+    logging.info(f"CSV de metadados exportado para: {csv_path}")
+
 app = typer.Typer()
-
-TILES_PARANA = [
-    "21JYM","21JYN", "21KYP","22JBS","22JBT","22KBU","22KBV","22JCS", "22JCT", "22KCU", "22KCV", "22JDS",
-"22JDT", "22KDU", "22KDV","22JES", "22JET", "22KEU", 
-    "22KEV", "22JFS", "22JFT", "22KFU", "22JGS", "22JGT"
-]
-
-
-
-
-
 
 @app.command()
 def main(
@@ -289,8 +357,8 @@ def main(
     radius_km: float = typer.Option(10.0, help="Raio da área de interesse em km"),
     start_date: str = typer.Argument(..., help="Data de início (YYYY-MM-DD)"),
     end_date: str = typer.Argument(..., help="Data final (YYYY-MM-DD)"),
-    output_dir: str = typer.Option("brazil_data_cube\\images_analises", help="Diretório de saída para salvar as imagens"),
-    tile_grid_path: str = typer.Option("brazil_data_cube\\shapefile_ids\\grade_sentinel_brasil.shp"),
+    output_dir: str = typer.Option("brazil_data_cube_estudos\\images_analises", help="Diretório de saída para salvar as imagens"),
+    tile_grid_path: str = typer.Option("brazil_data_cube_estudos\\shapefile_ids\\grade_sentinel_brasil.shp"),
     max_cloud_cover: float = typer.Option(20.0, help="Máximo de nuvens")
 ):
     bdc_conn = BdcConnection()
@@ -299,88 +367,25 @@ def main(
 
     if tile_id in ["Paraná", "parana"]:
         logging.info("Script de teste, selecione 1 ID específico")
+        return
 
+    if tile_id:
+        main_bbox, lat, lon, radius_km = obter_bbox_e_centro(tile_id, tile_grid_path, radius_km)
+    elif lat is not None and lon is not None:
+        main_bbox = BoundingBoxCalculator.calcular(lat, lon, radius_km)
+        logging.info("Processando sem tile ID...")
     else:
-        if tile_id:
-            logging.info(f"Buscando geometria para o tile {tile_id} na grade do Sentinel-2...")
-            tile_grid = gpd.read_file(tile_grid_path)
-            tile_grid = tile_grid[tile_grid["NAME"] == tile_id]
+        logging.error("É necessário fornecer latitude/longitude ou um ID de tile Sentinel-2.")
+        raise ValueError("Faltam parâmetros para definir a área de interesse.")
 
-            if tile_grid.empty:
-                logging.error(f"Tile {tile_id} não encontrado na grade Sentinel-2.")
-                raise ValueError("Tile ID inválido.")
+    logging.info(f"BBox principal: {main_bbox}")
+    image_assets = fetcher.fetch_image(satelite, main_bbox, start_date, end_date, max_cloud_cover)
+    if not image_assets:
+        logging.warning("Nenhuma imagem encontrada")
+        return
 
-            REDUCTION_FACTOR = 0.2
-            tile_geometry = tile_grid.geometry.iloc[0]
-            minx, miny, maxx, maxy = tile_geometry.bounds
-
-            center_x = (minx + maxx) / 2
-            center_y = (miny + maxy) / 2
-            width = (maxx - minx) * REDUCTION_FACTOR
-            height = (maxy - miny) * REDUCTION_FACTOR
-
-            new_minx = center_x - (width / 2)
-            new_maxx = center_x + (width / 2)
-            new_miny = center_y - (height / 2)
-            new_maxy = center_y + (height / 2)
-
-            main_bbox = [new_minx, new_miny, new_maxx, new_maxy]
-
-            lat = (maxy + miny) / 2
-            lon = (maxx + minx) / 2
-            bbox_width_km = ((maxx - minx) * 111 * math.cos(math.radians(lat)))
-            bbox_height_km = ((maxy - miny) * 111)
-            radius_km = max(bbox_width_km, bbox_height_km) / 2
-
-        elif lat is not None and lon is not None:
-            main_bbox = BoundingBoxCalculator.calcular(lat, lon, radius_km)
-            logging.info("Processando sem tile ID...")
-        else:
-            logging.error("É necessário fornecer latitude/longitude ou um ID de tile Sentinel-2.")
-            raise ValueError("Faltam parâmetros para definir a área de interesse.")
-
-        logging.info(f"BBox principal: {main_bbox}")
-        image_assets = fetcher.fetch_image(satelite, main_bbox, start_date, end_date, max_cloud_cover)
-        if not image_assets:
-            logging.warning("Nenhuma imagem encontrada")
-            return
-        logging.info("Baixando e processando imagens...")
-        metadados_coletados = []
-
-        for idx, images in enumerate(image_assets):
-            logging.info(images.properties)
-            base_name = f"{radius_km:.2f}KM_{satelite}_lat{lat:.4f}_lon{lon:.4f}_{start_date}_{end_date}"
-            
-            r = image_downloader.download(images.assets['B04'], f"{base_name}_red")
-            g = image_downloader.download(images.assets['B03'], f"{base_name}_green")
-            b = image_downloader.download(images.assets['B02'], f"{base_name}_blue")
-            
-            output_path = os.path.join(output_dir, f"Quadrante_{idx+1}_{base_name}_RGB.tif")
-            merge_rgb_tif(r, g, b, output_path, satelite)
-            
-            # Extrair metadados principais para o DataFrame
-            props = images.properties
-            metadados_coletados.append({
-                "quadrante": idx + 1,
-                "data": props.get("created", "")[:10],
-                "cloud_cover": props.get("eo:cloud_cover", None),
-                "tile_id": props.get("tileId", ""),
-                "satelite": satelite,
-                "produto": props.get("platformShortName", ""),
-                "Tamanho": props.get("ContentLength", ""),
-                "sensor": props.get("instrumentShortName", ""),
-                "Polygons": props.get("Footprint", ""), 
-                "path_tif": str(output_path)
-            })
-
-        # Criar e salvar o DataFrame
-        df = pd.DataFrame(metadados_coletados)
-
-        csv_path = os.path.join(output_dir, f"resumo_metadados_{satelite}_{start_date}_{end_date}.csv")
-        df.to_csv(csv_path, index=False, sep=";", encoding="utf-8-sig", float_format="%.2f")  # encoding compatível com Excel
-
-        logging.info(f"CSV de metadados exportado para: {csv_path}")
-
-
-if __name__ == "__main__":
-    app()
+    logging.info("Baixando e processando imagens...")
+    metadados_coletados = processar_e_baixar_imagens(
+        image_assets, radius_km, satelite, lat, lon, start_date, end_date, output_dir, image_downloader
+    )
+    salvar_metadados_csv(metadados_coletados, output_dir, satelite, start_date, end_date)

@@ -1,6 +1,6 @@
 # tests/test_bbox_handler.py
 import pytest
-from brazil_data_cube.bounding_box_handler import BoundingBoxHandler
+from brazil_data_cube.brazil_data_cube.utils.bounding_box_handler import BoundingBoxHandler
 import geopandas as gpd
 from shapely.geometry import box
 

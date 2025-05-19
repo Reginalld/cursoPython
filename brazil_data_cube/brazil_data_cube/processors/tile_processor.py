@@ -3,10 +3,10 @@
 import time
 import logging
 import geopandas as gpd
-from .config import TILES_PARANA
-from .config import SAT_SUPPORTED
-from .bounding_box_handler import BoundingBoxHandler
-from .logger import ResultManager
+from ..config import TILES_PARANA
+from ..config import SAT_SUPPORTED
+from ..utils.bounding_box_handler import BoundingBoxHandler
+from ..utils.logger import ResultManager
 from brazil_data_cube.processors.image_processor import ImageProcessor
 from brazil_data_cube.processors.mosaic_generator import MosaicGenerator
 import os

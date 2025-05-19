@@ -1,16 +1,16 @@
 # stac_downloader.py
 
 import typer
-from brazil_data_cube.bdc_connection import BdcConnection
+from brazil_data_cube.utils.bdc_connection import BdcConnection
 from brazil_data_cube.downloader.fetcher import SatelliteImageFetcher
 from brazil_data_cube.downloader.image_downloader import ImagemDownloader
-from brazil_data_cube.bounding_box_handler import BoundingBoxHandler
+from brazil_data_cube.utils.bounding_box_handler import BoundingBoxHandler
 from brazil_data_cube.processors.image_processor import ImageProcessor
-from brazil_data_cube.tile_processor import TileProcessor
+from brazil_data_cube.processors.tile_processor import TileProcessor
 import os
 import logging
 
-from brazil_data_cube.logger import setup_logger
+from brazil_data_cube.utils.logger import setup_logger
 
 setup_logger()
 
@@ -28,7 +28,7 @@ def main(
     start_date: str = typer.Argument(..., help="Data de início (YYYY-MM-DD)"),
     end_date: str = typer.Argument(..., help="Data final (YYYY-MM-DD)"),
     output_dir: str = typer.Option("imagens", help="Diretório de saída para salvar as imagens"),
-    tile_grid_path: str = typer.Option("shapefile_ids\\grade_sentinel_brasil.shp"),
+    tile_grid_path: str = typer.Option("shapefile_ids/grade_sentinel_brasil.shp"),
     max_cloud_cover: float = typer.Option(20.0, help="Máximo de nuvens")
 ):
     """

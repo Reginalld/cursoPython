@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: stac-downloader
+spec:
+  containers:
+  - name: stac-downloader-container
+    image: regiinaldo/stac-downloader:teste2
+    imagePullPolicy: Always
+    command: ["python"]
+    args:
+      - "stac_downloader.py"
+      - "S2_L2A-1"
+      - "--tile-id"
+      - "parana"
+      - "2025-01-01"
+      - "2025-03-29"
+    volumeMounts:
+      - name: data-volume
+        mountPath: /data  # Pasta onde as imagens serão salvas/lidas
+  volumes:
+    - name: data-volume
+      persistentVolumeClaim:
+        claimName: bdc-pvc

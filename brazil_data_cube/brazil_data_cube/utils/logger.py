@@ -4,9 +4,9 @@ import logging
 import csv
 from datetime import datetime
 import os
-from .config import LOG_CSV_PATH
-from .config import TILES_PARANA
-from .processors.mosaic_generator import MosaicGenerator  
+from ..config import LOG_CSV_PATH
+from ..config import TILES_PARANA
+from ..processors.mosaic_generator import MosaicGenerator  
 import pandas as pd 
 from pathlib import Path
 from typing import List, Dict, Any
